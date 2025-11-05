@@ -52,20 +52,31 @@ def get_server_info():
     try:
         # 检查配置文件是否存在
         if not os.path.exists(WG_CONF):
+            print(f"DEBUG: Config file {WG_CONF} does not exist")
             return {'error': 'WireGuard configuration not found'}
+
+        # 检查文件权限
+        try:
+            stat_info = os.stat(WG_CONF)
+            print(f"DEBUG: Config file permissions: {oct(stat_info.st_mode)[-3:]}, owner: {stat_info.st_uid}:{stat_info.st_gid}")
+        except Exception as e:
+            print(f"DEBUG: Cannot stat config file: {e}")
 
         # 获取服务器配置
         result = run_command(f'cat {WG_CONF}', use_sudo=False)
         if not result['success']:
+            print(f"DEBUG: Non-sudo read failed: {result.get('stderr', 'No error message')}")
             # 尝试使用 sudo 读取
             result = run_command(f'cat {WG_CONF}')
             if not result['success']:
+                print(f"DEBUG: Sudo read also failed: {result.get('stderr', 'No error message')}")
                 return {'error': 'Cannot read WireGuard config'}
 
         config = result['stdout']
 
         # 检查是否是占位符配置
         if 'placeholder' in config:
+            print("DEBUG: Found placeholder configuration")
             return {'error': 'WireGuard not fully initialized yet'}
 
         # 解析配置
@@ -83,8 +94,10 @@ def get_server_info():
         status_cmd = run_command(f'wg show {WG_INTERFACE}', use_sudo=False)
         server_info['status'] = 'active' if status_cmd['success'] else 'inactive'
 
+        print(f"DEBUG: Successfully read config, server_info: {server_info}")
         return server_info
     except Exception as e:
+        print(f"DEBUG: Exception in get_server_info: {e}")
         return {'error': str(e)}
 
 

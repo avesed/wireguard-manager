@@ -34,6 +34,21 @@ echo ""
 # 创建配置目录
 mkdir -p config/wireguard/clients
 
+# 设置配置目录权限
+chmod 755 config
+chmod 755 config/wireguard
+chmod 755 config/wireguard/clients
+
+# 如果运行用户不是 root，设置合适的所有者
+if [ "$(id -u)" != "0" ]; then
+    # 当前用户拥有配置目录
+    echo "✓ 配置目录已创建，权限设置完成"
+else
+    # root 用户，设置 1000:1000 权限以便容器访问
+    chown -R 1000:1000 config/wireguard 2>/dev/null || true
+    echo "✓ 配置目录已创建，权限设置完成"
+fi
+
 # 启用 IP 转发 (WireGuard 需要)
 echo "启用 IP 转发..."
 if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]; then
