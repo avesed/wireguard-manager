@@ -68,10 +68,9 @@ services:
       - ./config/wireguard:/etc/wireguard:rw
       - ./config/wireguard/clients:/etc/wireguard/clients:rw
 
-    # 依赖服务 - 添加条件等待
+    # 依赖服务 - 基本启动顺序
     depends_on:
-      wireguard:
-        condition: service_healthy
+      - wireguard
 
     # 网络模式 - 需要访问宿主机网络以执行 wg 命令
     network_mode: host

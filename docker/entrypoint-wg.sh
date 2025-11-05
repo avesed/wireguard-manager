@@ -104,9 +104,21 @@ fi
 
 # 启动 WireGuard
 echo "Starting WireGuard interface: $WG_INTERFACE"
-wg-quick up "$WG_INTERFACE"
 
-echo "✓ WireGuard started successfully"
+# 检查接口是否已存在
+if ip link show "$WG_INTERFACE" >/dev/null 2>&1; then
+    echo "⚠️  Interface $WG_INTERFACE already exists, bringing it down first..."
+    wg-quick down "$WG_INTERFACE" 2>/dev/null || true
+    sleep 2
+fi
+
+# 启动接口
+if wg-quick up "$WG_INTERFACE"; then
+    echo "✓ WireGuard started successfully"
+else
+    echo "❌ Failed to start WireGuard interface"
+    exit 1
+fi
 echo ""
 
 # 显示状态
@@ -120,8 +132,18 @@ echo "=========================================="
 # 保持容器运行并监控 WireGuard 状态
 while true; do
     if ! wg show "$WG_INTERFACE" >/dev/null 2>&1; then
-        echo "⚠️  WireGuard interface down, restarting..."
-        wg-quick up "$WG_INTERFACE" || true
+        echo "⚠️  WireGuard interface down, attempting restart..."
+
+        # 确保接口完全关闭
+        wg-quick down "$WG_INTERFACE" 2>/dev/null || true
+        sleep 2
+
+        # 重新启动接口
+        if wg-quick up "$WG_INTERFACE" 2>/dev/null; then
+            echo "✓ WireGuard interface restarted successfully"
+        else
+            echo "❌ Failed to restart WireGuard interface"
+        fi
     fi
     sleep 30
 done
