@@ -157,7 +157,9 @@ def get_clients():
                 pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
                 if pubkey_match:
                     pubkey = pubkey_match.group(1)
-                    name = f'Unknown-{pubkey[-8:]}'  # 使用公钥后8位
+                    # 使用URL安全的公钥后缀，去除特殊字符
+                    safe_suffix = pubkey.replace('+', '').replace('=', '').replace('/', '')[-8:]
+                    name = f'Unknown-{safe_suffix}'
                 else:
                     continue  # 跳过无效的peer块
 
@@ -426,6 +428,7 @@ def api_delete_client(client_name):
 
         config = config_result['stdout']
         original_config = config
+        new_config = config  # 初始化 new_config
 
         # 尝试多种删除模式
         patterns_to_try = []
@@ -434,22 +437,57 @@ def api_delete_client(client_name):
 
         # 首先尝试通过公钥直接删除（最可靠的方法）
         if client_name.startswith('Unknown-'):
-            pubkey_suffix = client_name.split('-')[1]
+            # 提取安全后缀
+            safe_suffix = client_name.split('-')[1]
             # 查找匹配的peer块
             peer_blocks = re.findall(r'((?:#[^\r\n]*[\r\n]+)*\[Peer\](?:[^\[])*?)(?=(?:#[^\r\n]*[\r\n]+)*\[Peer\]|$)', config, re.DOTALL)
             for block in peer_blocks:
                 pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
-                if pubkey_match and pubkey_match.group(1).endswith(pubkey_suffix):
-                    # 找到匹配的块，直接删除
-                    escaped_block = re.escape(block.strip())
-                    # 处理可能的换行符差异
-                    escaped_block = escaped_block.replace('\\n', r'[\r\n]+').replace('\\r', '')
-                    test_config = re.sub(escaped_block, '', config, flags=re.DOTALL)
-                    if test_config != config:
-                        new_config = test_config
-                        deletion_successful = True
-                        matched_block = block
-                        break
+                if pubkey_match:
+                    pubkey = pubkey_match.group(1)
+                    # 生成相同的安全后缀进行比较
+                    block_safe_suffix = pubkey.replace('+', '').replace('=', '').replace('/', '')[-8:]
+                    if block_safe_suffix == safe_suffix:
+                        # 找到匹配的块，直接删除整个peer块（包括注释）
+                        # 使用更简单的删除方法
+                        lines = config.split('\n')
+                        new_lines = []
+                        skip_block = False
+                        in_peer_block = False
+
+                        for line in lines:
+                            # 检测到匹配的公钥行
+                            if f'PublicKey = {pubkey}' in line:
+                                skip_block = True
+                                in_peer_block = True
+                                # 回退删除前面的注释行
+                                while new_lines and new_lines[-1].strip().startswith('#'):
+                                    new_lines.pop()
+                                continue
+
+                            # 如果在要删除的peer块中
+                            if skip_block:
+                                # 遇到新的peer块或接口配置，停止删除
+                                if line.strip().startswith('[Peer]') or line.strip().startswith('[Interface]'):
+                                    skip_block = False
+                                    new_lines.append(line)
+                                elif line.strip().startswith('#') and not in_peer_block:
+                                    # 新的注释可能是下一个客户端
+                                    skip_block = False
+                                    new_lines.append(line)
+                                # 否则跳过这一行（删除）
+                            else:
+                                new_lines.append(line)
+
+                            # 重置peer块标记
+                            if line.strip().startswith('['):
+                                in_peer_block = False
+
+                        new_config = '\n'.join(new_lines)
+                        if new_config != config:
+                            deletion_successful = True
+                            matched_block = block
+                            break
 
         # 如果通过公钥删除失败，尝试传统的注释匹配方式
         if not deletion_successful:
