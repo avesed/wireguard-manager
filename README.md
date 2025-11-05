@@ -9,8 +9,22 @@
 ```bash
 git clone https://github.com/avesed/wireguard-manager.git
 cd wireguard-manager
-chmod +x docker-deploy.sh
-sudo bash docker-deploy.sh
+
+# 设置脚本权限
+chmod +x setup-permissions.sh && ./setup-permissions.sh
+
+# 一键部署
+sudo ./docker-deploy.sh
+```
+
+**或者分步部署：**
+
+```bash
+# 1. 先启动 WireGuard 容器
+sudo ./start-wireguard.sh
+
+# 2. 等待 WireGuard 启动完成，然后启动 Web 界面
+sudo ./start-web.sh
 ```
 
 访问：`http://YOUR_SERVER_IP:8080`
@@ -45,6 +59,33 @@ sudo bash scripts/add_wireguard_client.sh
 - 响应式设计，支持移动端
 
 ## 🔧 管理命令
+
+### Docker 容器管理
+
+```bash
+# 查看容器状态
+docker ps
+
+# 查看日志
+docker logs -f wireguard-vpn      # WireGuard 日志
+docker logs -f wireguard-web-ui   # Web 界面日志
+
+# 重启容器
+docker restart wireguard-vpn
+docker restart wireguard-web-ui
+
+# 停止容器
+docker stop wireguard-vpn wireguard-web-ui
+
+# 进入容器调试
+docker exec -it wireguard-vpn bash
+docker exec -it wireguard-web-ui bash
+
+# 清理环境
+./cleanup-wireguard.sh
+```
+
+### 传统服务管理
 
 ```bash
 # WireGuard 服务

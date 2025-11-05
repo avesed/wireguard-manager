@@ -1,6 +1,5 @@
 #!/bin/bash
-
-# WireGuard Web UI 启动脚本
+# 简化的 Web 容器启动脚本
 
 set -e
 
@@ -8,16 +7,22 @@ WG_INTERFACE=${WG_INTERFACE:-wg0}
 WG_CONF="/etc/wireguard/${WG_INTERFACE}.conf"
 
 echo "=========================================="
-echo "WireGuard Web UI Container"
+echo "WireGuard Web UI Container (Simple)"
 echo "=========================================="
 echo ""
 
-echo "Waiting for WireGuard configuration..."
+# 检查是否以 root 运行
+if [ "$(id -u)" = "0" ]; then
+    echo "Running as root - good for file access"
+else
+    echo "Running as user $(id -u):$(id -g)"
+fi
 
-# 等待配置文件创建，最多等待60秒
-TIMEOUT=60
+# 等待配置文件存在
+TIMEOUT=30
 COUNTER=0
 
+echo "Checking for WireGuard configuration..."
 while [ ! -f "$WG_CONF" ] && [ $COUNTER -lt $TIMEOUT ]; do
     echo "Waiting for $WG_CONF... ($COUNTER/$TIMEOUT)"
     sleep 2
@@ -25,43 +30,30 @@ while [ ! -f "$WG_CONF" ] && [ $COUNTER -lt $TIMEOUT ]; do
 done
 
 if [ ! -f "$WG_CONF" ]; then
-    echo "❌ Timeout waiting for WireGuard configuration"
-    echo "Creating placeholder configuration for web UI to start..."
-
-    # 确保目录存在且有写权限
-    sudo mkdir -p "$(dirname "$WG_CONF")" || mkdir -p "$(dirname "$WG_CONF")" 2>/dev/null || true
-
-    # 创建一个基本的配置文件以允许 Web UI 启动
-    if command -v sudo >/dev/null 2>&1; then
-        sudo tee "$WG_CONF" > /dev/null <<EOF
+    echo "⚠️  WireGuard config not found, creating placeholder..."
+    mkdir -p "$(dirname "$WG_CONF")"
+    cat > "$WG_CONF" <<EOF
 [Interface]
-# Placeholder configuration - will be replaced by WireGuard container
+# Placeholder configuration
 PrivateKey = placeholder
 Address = 10.8.0.1/24
 ListenPort = 51820
 SaveConfig = false
 EOF
-        sudo chown root:1000 "$WG_CONF" 2>/dev/null || true
-        sudo chmod 640 "$WG_CONF" 2>/dev/null || true
-    else
-        cat > "$WG_CONF" <<EOF
-[Interface]
-# Placeholder configuration - will be replaced by WireGuard container
-PrivateKey = placeholder
-Address = 10.8.0.1/24
-ListenPort = 51820
-SaveConfig = false
-EOF
-    fi
-
-    echo "⚠️  Web UI starting with placeholder config"
+    echo "✓ Placeholder config created"
 else
     echo "✓ WireGuard configuration found"
+
+    # 显示文件信息用于调试
+    echo "Config file info:"
+    ls -la "$WG_CONF" || echo "Cannot list file"
+    echo "File content preview:"
+    head -5 "$WG_CONF" 2>/dev/null || echo "Cannot read file content"
 fi
 
 echo ""
-echo "Starting Web UI..."
+echo "Starting Web UI on port 8080..."
 echo "=========================================="
 
-# 执行传入的命令
+# 启动应用
 exec "$@"

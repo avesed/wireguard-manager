@@ -1,4 +1,4 @@
-# WireGuard Web UI Dockerfile
+# WireGuard Web UI Dockerfile - 简化版本
 FROM python:3.11-slim
 
 LABEL maintainer="WireGuard Manager"
@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     iproute2 \
     iptables \
     wireguard-tools \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,26 +33,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY web/app.py /app/app.py
 COPY web/templates/ /app/templates/
 
-# 创建 wireguard 组和用户，确保与主机的权限匹配
-RUN groupadd -g 1000 wireguard && \
-    useradd -m -u 1000 -g wireguard webuser && \
-    chown -R webuser:wireguard /app && \
-    echo "webuser ALL=(ALL) NOPASSWD: /bin/mkdir, /bin/chown, /bin/chmod, /usr/bin/tee" >> /etc/sudoers
+# 创建启动脚本
+COPY docker/entrypoint-web.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # 暴露端口
 EXPOSE 8080
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/ || exit 1
-
-# 创建启动脚本以等待配置文件
-COPY docker/entrypoint-web.sh /entrypoint-web.sh
-RUN chmod +x /entrypoint-web.sh
-
-# 切换用户
-USER webuser
-
 # 启动应用
-ENTRYPOINT ["/entrypoint-web.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "app.py"]
