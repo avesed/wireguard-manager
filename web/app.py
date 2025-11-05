@@ -209,6 +209,24 @@ def get_clients():
                 'transfer_tx': transfer_tx
             })
 
+        # 检测重复的公钥
+        pubkey_count = {}
+        for client in clients:
+            pubkey = client['public_key']
+            if pubkey in pubkey_count:
+                pubkey_count[pubkey] += 1
+            else:
+                pubkey_count[pubkey] = 1
+
+        # 标记重复的客户端
+        for client in clients:
+            pubkey = client['public_key']
+            if pubkey_count[pubkey] > 1:
+                client['is_duplicate'] = True
+                client['duplicate_warning'] = f'⚠️ 此公钥有{pubkey_count[pubkey]}个重复'
+            else:
+                client['is_duplicate'] = False
+
         return clients
     except Exception as e:
         return []
@@ -297,9 +315,21 @@ def api_add_client():
 
         subnet = address_match.group(1)
 
+        # 检查客户端名称是否已存在
+        existing_clients = get_clients()
+        for client in existing_clients:
+            if client['name'] == client_name:
+                return jsonify({
+                    'success': False,
+                    'error': f'客户端名称 "{client_name}" 已存在，请使用其他名称'
+                })
+
         # 查找可用 IP
         used_ips = re.findall(r'AllowedIPs\s*=\s*' + re.escape(subnet) + r'\.(\d+)/32', config)
         used_ips = [int(ip) for ip in used_ips]
+
+        # 提取所有已存在的公钥（用于重复检测）
+        existing_pubkeys = re.findall(r'PublicKey\s*=\s*([^\s]+)', config)
 
         next_ip = 2
         while next_ip in used_ips:
@@ -444,67 +474,115 @@ def api_delete_client(client_name):
 
         config = config_result['stdout']
         original_config = config
-        new_config = config  # 初始化 new_config
 
-        # 删除标记
+        # 使用安全的逐行解析方法删除peer块
         deletion_successful = False
+        target_safe_suffix = None if not client_name.startswith('Unknown-') else client_name.split('-')[1]
 
-        # 首先尝试通过公钥直接删除（最可靠的方法）
-        if client_name.startswith('Unknown-'):
-            # 提取安全后缀
-            safe_suffix = client_name.split('-')[1]
-            # 查找所有peer块及其前置注释
-            peer_pattern = r'((?:^#[^\n]*\n)*)\[Peer\]\s*\n((?:^[^\[].*\n)*)'
-            matches = list(re.finditer(peer_pattern, config, re.MULTILINE))
+        # 逐行安全解析 - 使用状态机
+        lines = config.split('\n')
+        new_lines = []
 
-            for match in matches:
-                block_text = match.group(0)
-                pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block_text)
-                if pubkey_match:
-                    pubkey = pubkey_match.group(1)
-                    # 生成相同的安全后缀进行比较
-                    block_safe_suffix = pubkey.replace('+', '').replace('=', '').replace('/', '')[-8:]
-                    if block_safe_suffix == safe_suffix:
-                        # 找到匹配的块，删除它
-                        new_config = config.replace(block_text, '', 1)
-                        # 清理可能的多余空行
-                        new_config = re.sub(r'\n\n\n+', '\n\n', new_config)
-                        deletion_successful = True
-                        break
+        # 状态跟踪
+        in_interface = False
+        in_peer = False
+        peer_comment_lines = []  # 当前peer前的注释行
+        peer_content_lines = []  # 当前peer块的内容行
+        skip_current_peer = False
 
-        # 如果通过公钥删除失败，尝试传统的注释匹配方式
-        if not deletion_successful:
-            # 使用更简单可靠的匹配方式
-            # 匹配模式：注释行 + [Peer] + peer内容（直到下一个peer或文件末尾）
-            peer_pattern = r'((?:^#[^\n]*\n)*)\[Peer\]\s*\n((?:^[^\[].*\n)*)'
-            matches = list(re.finditer(peer_pattern, config, re.MULTILINE))
+        for i, line in enumerate(lines):
+            stripped = line.strip()
 
-            for match in matches:
-                block_text = match.group(0)
-                comment_section = match.group(1)
+            # 检测 [Interface]
+            if stripped == '[Interface]':
+                in_interface = True
+                in_peer = False
+                new_lines.append(line)
 
-                # 检查注释中是否包含客户端名称
-                name_found = False
+            # 检测 [Peer]
+            elif stripped == '[Peer]':
+                # 保存之前的peer（如果不删除）
+                if in_peer and not skip_current_peer:
+                    # 保存上一个peer的注释和内容
+                    new_lines.extend(peer_comment_lines)
+                    new_lines.extend(peer_content_lines)
+                    # ✅ 关键修复：重置注释列表，防止注释被关联到错误的peer
+                    peer_comment_lines = []
 
-                # 1. 标准中文格式
-                if re.search(rf'#\s*客户端\s*[：:]\s*{re.escape(client_name)}\s*$', comment_section, re.MULTILINE):
-                    name_found = True
+                # 开始新的peer块
+                in_interface = False
+                in_peer = True
+                # peer_comment_lines 保留给当前peer使用（之前收集的注释）
+                peer_content_lines = [line]  # 从[Peer]行开始
+                skip_current_peer = False
 
-                # 2. 英文格式
-                if not name_found and re.search(rf'#\s*[Cc]lient\s*:\s*{re.escape(client_name)}\s*$', comment_section, re.MULTILINE):
-                    name_found = True
+            # 在interface块中
+            elif in_interface:
+                new_lines.append(line)
 
-                # 3. 简化格式
-                if not name_found and re.search(rf'#\s*{re.escape(client_name)}\s*$', comment_section, re.MULTILINE):
-                    name_found = True
+            # 在peer块中
+            elif in_peer:
+                peer_content_lines.append(line)
 
-                if name_found:
-                    # 找到匹配的块，删除它
-                    new_config = config.replace(block_text, '', 1)
-                    # 清理可能的多余空行
-                    new_config = re.sub(r'\n\n\n+', '\n\n', new_config)
-                    deletion_successful = True
-                    break
+                # 检测PublicKey行
+                if 'PublicKey' in line and '=' in line and not skip_current_peer:
+                    pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', line)
+                    if pubkey_match:
+                        pubkey = pubkey_match.group(1)
+
+                        # 判断是否是要删除的目标
+                        is_target = False
+
+                        # 方法1：通过公钥后缀匹配（Unknown客户端）
+                        if target_safe_suffix:
+                            block_safe_suffix = pubkey.replace('+', '').replace('=', '').replace('/', '')[-8:]
+                            if block_safe_suffix == target_safe_suffix:
+                                is_target = True
+
+                        # 方法2：通过注释中的名称匹配（命名客户端）
+                        else:
+                            comment_text = '\n'.join(peer_comment_lines)
+                            if re.search(rf'#\s*客户端\s*[：:]\s*{re.escape(client_name)}\s*$', comment_text, re.MULTILINE):
+                                is_target = True
+                            elif re.search(rf'#\s*[Cc]lient\s*:\s*{re.escape(client_name)}\s*$', comment_text, re.MULTILINE):
+                                is_target = True
+                            elif re.search(rf'#\s*{re.escape(client_name)}\s*$', comment_text, re.MULTILINE):
+                                is_target = True
+
+                        if is_target:
+                            skip_current_peer = True
+                            deletion_successful = True
+                            # 清空已收集的内容和注释
+                            peer_content_lines = []
+                            peer_comment_lines = []
+
+            # 不在任何section中（可能是peer的注释或空行）
+            else:
+                if stripped.startswith('#'):
+                    # 这是注释行，可能是下一个peer的注释
+                    peer_comment_lines.append(line)
+                elif not stripped:
+                    # 空行
+                    if peer_comment_lines:
+                        # 如果之前有注释，这个空行属于注释部分
+                        peer_comment_lines.append(line)
+                    else:
+                        # 否则直接添加
+                        new_lines.append(line)
+                else:
+                    # 其他行
+                    new_lines.append(line)
+
+        # 处理最后一个peer块（如果存在且不删除）
+        if in_peer and not skip_current_peer:
+            new_lines.extend(peer_comment_lines)
+            new_lines.extend(peer_content_lines)
+
+        # 组装新配置
+        new_config = '\n'.join(new_lines)
+
+        # 清理多余的连续空行
+        new_config = re.sub(r'\n\n\n+', '\n\n', new_config)
 
         # 如果所有模式都失败，返回错误
         if not deletion_successful:
@@ -526,11 +604,34 @@ def api_delete_client(client_name):
                 'error': error_msg
             })
 
-        # 验证新配置不为空且仍包含[Interface]
+        # 验证新配置的完整性
         if '[Interface]' not in new_config:
             return jsonify({
                 'success': False,
-                'error': '删除操作会破坏配置文件结构，操作已取消'
+                'error': '删除操作会破坏配置文件结构（缺少[Interface]），操作已取消'
+            })
+
+        # 验证配置文件基本结构
+        validation_errors = []
+
+        # 检查是否有必需的Interface配置项
+        if 'PrivateKey' not in new_config:
+            validation_errors.append('缺少PrivateKey')
+        if 'Address' not in new_config:
+            validation_errors.append('缺少Address')
+
+        # 检查剩余的peer块是否完整
+        remaining_peers = re.findall(r'\[Peer\](.*?)(?=\[Peer\]|$)', new_config, re.DOTALL)
+        for i, peer in enumerate(remaining_peers):
+            if 'PublicKey' not in peer:
+                validation_errors.append(f'Peer {i+1} 缺少PublicKey')
+            if 'AllowedIPs' not in peer:
+                validation_errors.append(f'Peer {i+1} 缺少AllowedIPs')
+
+        if validation_errors:
+            return jsonify({
+                'success': False,
+                'error': f'删除后配置验证失败: {", ".join(validation_errors)}。操作已取消，配置未修改。'
             })
 
         # 备份配置
