@@ -349,8 +349,13 @@ AllowedIPs = {client_ip}/32
         # 备份配置
         run_command(f'cp {WG_CONF} {WG_CONF}.backup.$(date +%Y%m%d_%H%M%S)')
 
-        # 追加配置
-        run_command(f"echo '{peer_config}' >> {WG_CONF}")
+        # 追加配置 - 使用临时文件而不是echo，避免shell解释问题
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as peer_f:
+            peer_f.write(peer_config)
+            peer_temp = peer_f.name
+
+        run_command(f'cat {peer_temp} >> {WG_CONF}')
+        os.unlink(peer_temp)
 
         # 生成客户端配置
         client_config = f'''[Interface]
@@ -365,12 +370,23 @@ AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 '''
 
-        # 保存客户端配置
-        run_command(f"echo '{client_config}' > {CLIENT_DIR}/{client_name}.conf")
+        # 保存客户端配置 - 使用临时文件
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as client_f:
+            client_f.write(client_config)
+            client_temp = client_f.name
+
+        run_command(f'cp {client_temp} {CLIENT_DIR}/{client_name}.conf')
+        os.unlink(client_temp)
         run_command(f'chmod 600 {CLIENT_DIR}/{client_name}.conf')
 
-        # 重新加载配置
-        run_command(f'wg syncconf {WG_INTERFACE} <(wg-quick strip {WG_INTERFACE})')
+        # 重新加载配置 - 使用两步法代替进程替换
+        strip_result = run_command(f'wg-quick strip {WG_INTERFACE}')
+        if strip_result['success']:
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as strip_f:
+                strip_f.write(strip_result['stdout'])
+                strip_file = strip_f.name
+            run_command(f'wg syncconf {WG_INTERFACE} {strip_file}')
+            os.unlink(strip_file)
 
         return jsonify({
             'success': True,
@@ -430,90 +446,65 @@ def api_delete_client(client_name):
         original_config = config
         new_config = config  # 初始化 new_config
 
-        # 尝试多种删除模式
-        patterns_to_try = []
+        # 删除标记
         deletion_successful = False
-        matched_block = None
 
         # 首先尝试通过公钥直接删除（最可靠的方法）
         if client_name.startswith('Unknown-'):
             # 提取安全后缀
             safe_suffix = client_name.split('-')[1]
-            # 查找匹配的peer块
-            peer_blocks = re.findall(r'((?:#[^\r\n]*[\r\n]+)*\[Peer\](?:[^\[])*?)(?=(?:#[^\r\n]*[\r\n]+)*\[Peer\]|$)', config, re.DOTALL)
-            for block in peer_blocks:
-                pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
+            # 查找所有peer块及其前置注释
+            peer_pattern = r'((?:^#[^\n]*\n)*)\[Peer\]\s*\n((?:^[^\[].*\n)*)'
+            matches = list(re.finditer(peer_pattern, config, re.MULTILINE))
+
+            for match in matches:
+                block_text = match.group(0)
+                pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block_text)
                 if pubkey_match:
                     pubkey = pubkey_match.group(1)
                     # 生成相同的安全后缀进行比较
                     block_safe_suffix = pubkey.replace('+', '').replace('=', '').replace('/', '')[-8:]
                     if block_safe_suffix == safe_suffix:
-                        # 找到匹配的块，直接删除整个peer块（包括注释）
-                        # 使用更简单的删除方法
-                        lines = config.split('\n')
-                        new_lines = []
-                        skip_block = False
-                        in_peer_block = False
-
-                        for line in lines:
-                            # 检测到匹配的公钥行
-                            if f'PublicKey = {pubkey}' in line:
-                                skip_block = True
-                                in_peer_block = True
-                                # 回退删除前面的注释行
-                                while new_lines and new_lines[-1].strip().startswith('#'):
-                                    new_lines.pop()
-                                continue
-
-                            # 如果在要删除的peer块中
-                            if skip_block:
-                                # 遇到新的peer块或接口配置，停止删除
-                                if line.strip().startswith('[Peer]') or line.strip().startswith('[Interface]'):
-                                    skip_block = False
-                                    new_lines.append(line)
-                                elif line.strip().startswith('#') and not in_peer_block:
-                                    # 新的注释可能是下一个客户端
-                                    skip_block = False
-                                    new_lines.append(line)
-                                # 否则跳过这一行（删除）
-                            else:
-                                new_lines.append(line)
-
-                            # 重置peer块标记
-                            if line.strip().startswith('['):
-                                in_peer_block = False
-
-                        new_config = '\n'.join(new_lines)
-                        if new_config != config:
-                            deletion_successful = True
-                            matched_block = block
-                            break
+                        # 找到匹配的块，删除它
+                        new_config = config.replace(block_text, '', 1)
+                        # 清理可能的多余空行
+                        new_config = re.sub(r'\n\n\n+', '\n\n', new_config)
+                        deletion_successful = True
+                        break
 
         # 如果通过公钥删除失败，尝试传统的注释匹配方式
         if not deletion_successful:
-            # 1. 标准格式：# 客户端: name
-            patterns_to_try.append(rf'#\s*客户端\s*:\s*{re.escape(client_name)}.*?\[Peer\].*?(?=#\s*(?:客户端|[Cc]lient)|\[Peer\]|$)')
+            # 使用更简单可靠的匹配方式
+            # 匹配模式：注释行 + [Peer] + peer内容（直到下一个peer或文件末尾）
+            peer_pattern = r'((?:^#[^\n]*\n)*)\[Peer\]\s*\n((?:^[^\[].*\n)*)'
+            matches = list(re.finditer(peer_pattern, config, re.MULTILINE))
 
-            # 2. 中文冒号格式：# 客户端： name
-            patterns_to_try.append(rf'#\s*客户端\s*：\s*{re.escape(client_name)}.*?\[Peer\].*?(?=#\s*(?:客户端|[Cc]lient)|\[Peer\]|$)')
+            for match in matches:
+                block_text = match.group(0)
+                comment_section = match.group(1)
 
-            # 3. 英文格式：# Client: name
-            patterns_to_try.append(rf'#\s*[Cc]lient\s*:\s*{re.escape(client_name)}.*?\[Peer\].*?(?=#\s*(?:客户端|[Cc]lient)|\[Peer\]|$)')
+                # 检查注释中是否包含客户端名称
+                name_found = False
 
-            # 4. 简化格式：# name
-            patterns_to_try.append(rf'#\s*{re.escape(client_name)}\s*[\r\n]+\[Peer\].*?(?=#\s*\w+|\[Peer\]|$)')
+                # 1. 标准中文格式
+                if re.search(rf'#\s*客户端\s*[：:]\s*{re.escape(client_name)}\s*$', comment_section, re.MULTILINE):
+                    name_found = True
 
-            # 尝试每种模式
-            for pattern in patterns_to_try:
-                try:
-                    test_config = re.sub(pattern, '', new_config, flags=re.DOTALL)
-                    if test_config != new_config:
-                        new_config = test_config
-                        deletion_successful = True
-                        break
-                except re.error:
-                    # 如果正则表达式有问题，跳过这个模式
-                    continue
+                # 2. 英文格式
+                if not name_found and re.search(rf'#\s*[Cc]lient\s*:\s*{re.escape(client_name)}\s*$', comment_section, re.MULTILINE):
+                    name_found = True
+
+                # 3. 简化格式
+                if not name_found and re.search(rf'#\s*{re.escape(client_name)}\s*$', comment_section, re.MULTILINE):
+                    name_found = True
+
+                if name_found:
+                    # 找到匹配的块，删除它
+                    new_config = config.replace(block_text, '', 1)
+                    # 清理可能的多余空行
+                    new_config = re.sub(r'\n\n\n+', '\n\n', new_config)
+                    deletion_successful = True
+                    break
 
         # 如果所有模式都失败，返回错误
         if not deletion_successful:
@@ -566,11 +557,26 @@ def api_delete_client(client_name):
                 run_command(f'rm -f {CLIENT_DIR}/*{client_name.split("-")[1]}*')
 
         # 重新加载配置并检查结果
-        reload_result = run_command(f'wg syncconf {WG_INTERFACE} <(wg-quick strip {WG_INTERFACE})')
-        if not reload_result['success']:
-            # 如果重新加载失败，尝试恢复备份
-            run_command(f'cp {WG_CONF}.backup.$(date +%Y%m%d_%H%M%S) {WG_CONF}')
-            return jsonify({'success': False, 'error': 'WireGuard配置重新加载失败，已恢复备份'})
+        # 使用两步法代替进程替换，更兼容
+        strip_result = run_command(f'wg-quick strip {WG_INTERFACE}')
+        if strip_result['success']:
+            # 将strip结果写入临时文件
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as strip_f:
+                strip_f.write(strip_result['stdout'])
+                strip_file = strip_f.name
+
+            # 使用临时文件进行syncconf
+            reload_result = run_command(f'wg syncconf {WG_INTERFACE} {strip_file}')
+            os.unlink(strip_file)
+
+            if not reload_result['success']:
+                # 如果重新加载失败，尝试恢复最新备份
+                run_command(f'ls -t {WG_CONF}.backup.* | head -1 | xargs -I {{}} cp {{}} {WG_CONF}')
+                return jsonify({'success': False, 'error': f'WireGuard配置重新加载失败: {reload_result.get("stderr", "未知错误")}，已恢复备份'})
+        else:
+            # strip失败，恢复备份
+            run_command(f'ls -t {WG_CONF}.backup.* | head -1 | xargs -I {{}} cp {{}} {WG_CONF}')
+            return jsonify({'success': False, 'error': f'配置验证失败: {strip_result.get("stderr", "未知错误")}，已恢复备份'})
 
         return jsonify({
             'success': True,
