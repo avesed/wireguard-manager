@@ -2,35 +2,6 @@
 
 🔒 一个完整的 WireGuard VPN 服务器管理工具集，包含自动化安装、Web 管理界面和客户端管理功能。
 
-## 📦 项目结构
-
-```
-wireguard-manager/
-├── README.md                    # 项目说明文档
-├── DOCKER.md                    # 🐳 Docker 部署指南
-├── docker-compose.yml           # Docker Compose 配置
-├── docker-deploy.sh             # Docker 一键部署脚本
-├── Dockerfile.wireguard         # WireGuard 服务镜像
-├── Dockerfile.web               # Web 界面镜像
-├── .dockerignore                # Docker 忽略文件
-├── deploy_wireguard_web.sh      # Web 管理界面部署脚本
-├── docker/                      # Docker 相关文件
-│   └── entrypoint-wg.sh         # WireGuard 容器启动脚本
-├── scripts/                     # 核心脚本目录
-│   ├── install_wireguard.sh     # WireGuard 服务端安装脚本
-│   ├── uninstall_wireguard.sh   # WireGuard 完全卸载脚本
-│   ├── add_wireguard_client.sh  # 添加客户端脚本
-│   ├── wg_diagnostic.sh         # 系统诊断脚本
-│   └── fix_sysctl_warnings.sh   # 修复系统警告脚本
-└── web/                         # Web 管理界面
-    ├── app.py                   # Flask 后端应用
-    ├── requirements.txt         # Python 依赖
-    ├── install_wireguard_web.sh # Web 界面安装脚本
-    ├── DEPLOY.md                # Web 部署指南
-    └── templates/
-        └── index.html           # Web 前端界面
-```
-
 ## 🚀 快速开始
 
 ### 🐳 方式1：Docker 部署（推荐）
@@ -278,23 +249,3 @@ sudo chmod 600 /etc/wireguard/*.conf
 - 内存: 512MB
 - 存储: 1GB 可用空间
 - 网络: 公网 IP 地址
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request 来改进这个项目！
-
-## 📄 许可证
-
-MIT License - 详见 LICENSE 文件
-
-## 🙏 致谢
-
-感谢 WireGuard 团队开发了这个优秀的 VPN 解决方案。
-
----
-
-**快速链接：**
-- [WireGuard 官网](https://www.wireguard.com/)
-- [安装指南](#快速开始)
-- [故障排除](#故障排除)
-- [安全建议](#安全建议)
