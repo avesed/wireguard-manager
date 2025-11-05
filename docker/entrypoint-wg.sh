@@ -76,11 +76,9 @@ PostDown = iptables -D FORWARD -o $WG_INTERFACE -j ACCEPT || true
 PostDown = iptables -t nat -D POSTROUTING -o $DEFAULT_INTERFACE -j MASQUERADE || true
 PostDown = iptables -D INPUT -p udp --dport $WG_PORT -j ACCEPT || true
 
-# 默认客户端配置
+# 客户端: default-client
 [Peer]
-# 客户端公钥
 PublicKey = $CLIENT_PUBLIC_KEY
-# 允许的客户端 IP
 AllowedIPs = 10.8.0.2/32
 EOF
 
