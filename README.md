@@ -7,15 +7,13 @@
 ### 🐳 Docker 部署（推荐）
 
 ```bash
-git clone https://github.com/your-repo/wireguard-manager.git
+git clone https://github.com/avesed/wireguard-manager.git
 cd wireguard-manager
 chmod +x docker-deploy.sh
 sudo bash docker-deploy.sh
 ```
 
 访问：`http://YOUR_SERVER_IP:8080`
-
-详细文档：[DOCKER.md](DOCKER.md)
 
 ### 📜 脚本部署
 
