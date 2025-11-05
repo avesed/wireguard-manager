@@ -46,17 +46,6 @@ sudo bash scripts/add_wireguard_client.sh
 - 生成二维码、一键复制配置
 - 响应式设计，支持移动端
 
-## 📂 项目结构
-
-```
-wireguard-manager/
-├── scripts/              # 核心脚本
-├── web/                  # Web 管理界面
-├── docker/               # Docker 相关文件
-├── docker-compose.yml    # Docker Compose 配置
-└── DOCKER.md             # Docker 部署文档
-```
-
 ## 🔧 管理命令
 
 ```bash
