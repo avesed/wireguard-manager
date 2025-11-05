@@ -130,15 +130,27 @@ def get_clients():
         peer_blocks = re.findall(r'\[Peer\](.*?)(?=\[Peer\]|$)', config, re.DOTALL)
 
         for block in peer_blocks:
-            # 提取客户端名称（从注释中）- 更灵活的匹配模式
-            name_match = re.search(r'#\s*客户端[：:]\s*(\S+)', block)
-            # 如果标准格式不匹配，尝试其他常见格式
-            if not name_match:
-                name_match = re.search(r'#\s*[Cc]lient[：:\s]+(\S+)', block)
-            if not name_match:
-                name_match = re.search(r'#\s*(\S+)', block)  # 任何注释
+            # 提取客户端名称（从注释中）- 只使用精确匹配
+            name_match = None
 
-            # 对于真正的Unknown客户端，使用公钥的后8位作为标识
+            # 1. 标准中文格式：# 客户端: name 或 # 客户端： name
+            name_match = re.search(r'#\s*客户端[：:]\s*(\S+)', block)
+
+            # 2. 英文格式：# Client: name
+            if not name_match:
+                name_match = re.search(r'#\s*[Cc]lient\s*[：:]\s*(\S+)', block)
+
+            # 3. 简化格式：# name （但要确保不是关键词）
+            if not name_match:
+                simple_match = re.search(r'#\s*([a-zA-Z0-9_-]+)\s*$', block, re.MULTILINE)
+                if simple_match:
+                    candidate_name = simple_match.group(1)
+                    # 排除明显的关键词，避免误匹配
+                    excluded_words = ['Peer', 'peer', 'PublicKey', 'AllowedIPs', 'Endpoint', 'PersistentKeepalive']
+                    if candidate_name not in excluded_words and len(candidate_name) > 1:
+                        name_match = simple_match
+
+            # 对于真正无法识别的客户端，使用公钥后8位作为标识
             if name_match:
                 name = name_match.group(1)
             else:
@@ -417,48 +429,72 @@ def api_delete_client(client_name):
 
         # 尝试多种删除模式
         patterns_to_try = []
+        deletion_successful = False
+        matched_block = None
 
-        # 1. 标准格式：# 客户端: name
-        patterns_to_try.append(rf'# 客户端: {re.escape(client_name)}.*?\[Peer\].*?(?=# 客户端:|$)')
-
-        # 2. 中文冒号格式：# 客户端： name
-        patterns_to_try.append(rf'# 客户端： {re.escape(client_name)}.*?\[Peer\].*?(?=# 客户端:|$)')
-
-        # 3. 英文格式：# Client: name
-        patterns_to_try.append(rf'# [Cc]lient: {re.escape(client_name)}.*?\[Peer\].*?(?=# [Cc]lient:|$)')
-
-        # 4. 对于Unknown-XXXXXX格式的客户端，尝试通过公钥匹配
+        # 首先尝试通过公钥直接删除（最可靠的方法）
         if client_name.startswith('Unknown-'):
             pubkey_suffix = client_name.split('-')[1]
-            # 找到包含该公钥后缀的peer块
-            peer_blocks = re.findall(r'(# .*?\[Peer\].*?)(?=# .*?\[Peer\]|$)', config, re.DOTALL)
+            # 查找匹配的peer块
+            peer_blocks = re.findall(r'((?:#[^\r\n]*[\r\n]+)*\[Peer\](?:[^\[])*?)(?=(?:#[^\r\n]*[\r\n]+)*\[Peer\]|$)', config, re.DOTALL)
             for block in peer_blocks:
                 pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
                 if pubkey_match and pubkey_match.group(1).endswith(pubkey_suffix):
-                    # 构建精确的删除模式
+                    # 找到匹配的块，直接删除
                     escaped_block = re.escape(block.strip())
-                    patterns_to_try.append(escaped_block)
-                    break
+                    # 处理可能的换行符差异
+                    escaped_block = escaped_block.replace('\\n', r'[\r\n]+').replace('\\r', '')
+                    test_config = re.sub(escaped_block, '', config, flags=re.DOTALL)
+                    if test_config != config:
+                        new_config = test_config
+                        deletion_successful = True
+                        matched_block = block
+                        break
 
-        # 5. 通用注释格式：# name
-        patterns_to_try.append(rf'# {re.escape(client_name)}.*?\[Peer\].*?(?=# .*?\[Peer\]|$)')
+        # 如果通过公钥删除失败，尝试传统的注释匹配方式
+        if not deletion_successful:
+            # 1. 标准格式：# 客户端: name
+            patterns_to_try.append(rf'#\s*客户端\s*:\s*{re.escape(client_name)}.*?\[Peer\].*?(?=#\s*(?:客户端|[Cc]lient)|\[Peer\]|$)')
 
-        new_config = config
-        deletion_successful = False
+            # 2. 中文冒号格式：# 客户端： name
+            patterns_to_try.append(rf'#\s*客户端\s*：\s*{re.escape(client_name)}.*?\[Peer\].*?(?=#\s*(?:客户端|[Cc]lient)|\[Peer\]|$)')
 
-        # 尝试每种模式
-        for pattern in patterns_to_try:
-            test_config = re.sub(pattern, '', new_config, flags=re.DOTALL)
-            if test_config != new_config:
-                new_config = test_config
-                deletion_successful = True
-                break
+            # 3. 英文格式：# Client: name
+            patterns_to_try.append(rf'#\s*[Cc]lient\s*:\s*{re.escape(client_name)}.*?\[Peer\].*?(?=#\s*(?:客户端|[Cc]lient)|\[Peer\]|$)')
+
+            # 4. 简化格式：# name
+            patterns_to_try.append(rf'#\s*{re.escape(client_name)}\s*[\r\n]+\[Peer\].*?(?=#\s*\w+|\[Peer\]|$)')
+
+            # 尝试每种模式
+            for pattern in patterns_to_try:
+                try:
+                    test_config = re.sub(pattern, '', new_config, flags=re.DOTALL)
+                    if test_config != new_config:
+                        new_config = test_config
+                        deletion_successful = True
+                        break
+                except re.error:
+                    # 如果正则表达式有问题，跳过这个模式
+                    continue
 
         # 如果所有模式都失败，返回错误
         if not deletion_successful:
+            # 为调试提供更多信息
+            debug_info = []
+            peer_blocks = re.findall(r'\[Peer\](.*?)(?=\[Peer\]|$)', config, re.DOTALL)
+            for i, block in enumerate(peer_blocks):
+                pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
+                if pubkey_match:
+                    pubkey = pubkey_match.group(1)
+                    debug_info.append(f"Peer {i+1}: 公钥后8位={pubkey[-8:]}")
+
+            error_msg = f'未找到客户端 "{original_client_name}"。'
+            if debug_info:
+                error_msg += f' 当前配置中的客户端: {", ".join(debug_info)}'
+
             return jsonify({
                 'success': False,
-                'error': f'未找到客户端 "{original_client_name}"。请检查配置文件或联系管理员。'
+                'error': error_msg
             })
 
         # 验证新配置不为空且仍包含[Interface]
@@ -505,6 +541,68 @@ def api_delete_client(client_name):
 
     except Exception as e:
         return jsonify({'success': False, 'error': f'删除过程中发生错误: {str(e)}'})
+
+
+@app.route('/api/debug/config', methods=['GET'])
+def api_debug_config():
+    """调试接口：查看配置文件结构"""
+    try:
+        # 读取配置文件
+        config_result = run_command(f'cat {WG_CONF}')
+        if not config_result['success']:
+            return jsonify({'success': False, 'error': '无法读取配置文件'})
+
+        config = config_result['stdout']
+
+        # 解析peer块
+        peer_blocks = re.findall(r'\[Peer\](.*?)(?=\[Peer\]|$)', config, re.DOTALL)
+
+        debug_info = {
+            'total_peers': len(peer_blocks),
+            'peers': []
+        }
+
+        for i, block in enumerate(peer_blocks):
+            peer_info = {
+                'index': i + 1,
+                'raw_block': block.strip(),
+                'extracted_info': {}
+            }
+
+            # 尝试提取各种信息
+            # 1. 标准中文格式
+            name_match = re.search(r'#\s*客户端[：:]\s*(\S+)', block)
+            if name_match:
+                peer_info['extracted_info']['standard_chinese'] = name_match.group(1)
+
+            # 2. 英文格式
+            name_match = re.search(r'#\s*[Cc]lient\s*[：:]\s*(\S+)', block)
+            if name_match:
+                peer_info['extracted_info']['english'] = name_match.group(1)
+
+            # 3. 简化格式
+            simple_match = re.search(r'#\s*([a-zA-Z0-9_-]+)\s*$', block, re.MULTILINE)
+            if simple_match:
+                peer_info['extracted_info']['simple'] = simple_match.group(1)
+
+            # 4. 公钥
+            pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
+            if pubkey_match:
+                pubkey = pubkey_match.group(1)
+                peer_info['extracted_info']['public_key'] = pubkey
+                peer_info['extracted_info']['public_key_suffix'] = pubkey[-8:]
+
+            # 5. IP
+            ip_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', block)
+            if ip_match:
+                peer_info['extracted_info']['allowed_ips'] = ip_match.group(1)
+
+            debug_info['peers'].append(peer_info)
+
+        return jsonify({'success': True, 'data': debug_info})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'调试过程中发生错误: {str(e)}'})
 
 
 if __name__ == '__main__':
