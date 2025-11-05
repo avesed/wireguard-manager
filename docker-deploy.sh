@@ -13,7 +13,12 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+# 检查 Docker Compose 并设置命令
+if command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker-compose"
+elif docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE="docker compose"
+else
     echo "❌ Docker Compose 未安装"
     exit 1
 fi
@@ -72,9 +77,9 @@ fi
 echo ""
 echo "启动服务..."
 if [ -z "$SERVICES" ]; then
-    docker-compose up -d
+    $DOCKER_COMPOSE up -d
 else
-    docker-compose up -d $SERVICES
+    $DOCKER_COMPOSE up -d $SERVICES
 fi
 
 sleep 5
@@ -98,8 +103,8 @@ if [ "$SERVICES" != "wireguard" ]; then
 fi
 
 echo "管理命令:"
-echo "  查看状态: docker-compose ps"
-echo "  查看日志: docker-compose logs -f"
-echo "  停止服务: docker-compose stop"
-echo "  重启服务: docker-compose restart"
+echo "  查看状态: $DOCKER_COMPOSE ps"
+echo "  查看日志: $DOCKER_COMPOSE logs -f"
+echo "  停止服务: $DOCKER_COMPOSE stop"
+echo "  重启服务: $DOCKER_COMPOSE restart"
 echo "=========================================="
