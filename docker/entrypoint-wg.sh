@@ -89,6 +89,12 @@ EOF
     # 创建客户端配置目录
     mkdir -p /etc/wireguard/clients
 
+    # 设置正确的权限以供 Web UI 访问
+    chown -R root:1000 /etc/wireguard
+    chmod -R 640 /etc/wireguard/*.conf
+    chmod -R 644 /etc/wireguard/clients
+    chmod 750 /etc/wireguard
+
     echo "✓ Initial configuration generated"
     echo ""
     echo "Server Public Key: $SERVER_PUBLIC_KEY"

@@ -32,9 +32,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY web/app.py /app/app.py
 COPY web/templates/ /app/templates/
 
-# 创建非特权用户
-RUN useradd -m -u 1000 webuser && \
-    chown -R webuser:webuser /app
+# 创建 wireguard 组和用户，确保与主机的权限匹配
+RUN groupadd -g 1000 wireguard && \
+    useradd -m -u 1000 -g wireguard webuser && \
+    chown -R webuser:wireguard /app
 
 # 暴露端口
 EXPOSE 8080
@@ -43,8 +44,13 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/ || exit 1
 
+# 创建启动脚本以等待配置文件
+COPY docker/entrypoint-web.sh /entrypoint-web.sh
+RUN chmod +x /entrypoint-web.sh
+
 # 切换用户
 USER webuser
 
 # 启动应用
+ENTRYPOINT ["/entrypoint-web.sh"]
 CMD ["python", "app.py"]

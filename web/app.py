@@ -50,12 +50,23 @@ def run_command(cmd, use_sudo=True):
 def get_server_info():
     """获取服务器信息"""
     try:
+        # 检查配置文件是否存在
+        if not os.path.exists(WG_CONF):
+            return {'error': 'WireGuard configuration not found'}
+
         # 获取服务器配置
-        result = run_command(f'cat {WG_CONF}')
+        result = run_command(f'cat {WG_CONF}', use_sudo=False)
         if not result['success']:
-            return {'error': 'Cannot read WireGuard config'}
+            # 尝试使用 sudo 读取
+            result = run_command(f'cat {WG_CONF}')
+            if not result['success']:
+                return {'error': 'Cannot read WireGuard config'}
 
         config = result['stdout']
+
+        # 检查是否是占位符配置
+        if 'placeholder' in config:
+            return {'error': 'WireGuard not fully initialized yet'}
 
         # 解析配置
         server_info = {
@@ -69,8 +80,8 @@ def get_server_info():
         server_info['public_ip'] = public_ip_cmd['stdout'].strip() if public_ip_cmd['success'] else 'N/A'
 
         # 获取服务状态
-        status_cmd = run_command(f'systemctl is-active wg-quick@{WG_INTERFACE}')
-        server_info['status'] = status_cmd['stdout'].strip() if status_cmd['success'] else 'inactive'
+        status_cmd = run_command(f'wg show {WG_INTERFACE}', use_sudo=False)
+        server_info['status'] = 'active' if status_cmd['success'] else 'inactive'
 
         return server_info
     except Exception as e:
@@ -80,15 +91,26 @@ def get_server_info():
 def get_clients():
     """获取所有客户端信息"""
     try:
-        # 读取配置文件
-        result = run_command(f'cat {WG_CONF}')
-        if not result['success']:
+        # 检查配置文件是否存在
+        if not os.path.exists(WG_CONF):
             return []
+
+        # 读取配置文件
+        result = run_command(f'cat {WG_CONF}', use_sudo=False)
+        if not result['success']:
+            # 尝试使用 sudo 读取
+            result = run_command(f'cat {WG_CONF}')
+            if not result['success']:
+                return []
 
         config = result['stdout']
 
+        # 检查是否是占位符配置
+        if 'placeholder' in config:
+            return []
+
         # 获取 wg show 输出（包含连接状态）
-        wg_show = run_command(f'wg show {WG_INTERFACE}')
+        wg_show = run_command(f'wg show {WG_INTERFACE}', use_sudo=False)
         wg_output = wg_show['stdout'] if wg_show['success'] else ''
 
         clients = []

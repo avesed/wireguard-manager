@@ -63,16 +63,22 @@ services:
       - WEB_PORT=8080
       - TZ=Asia/Shanghai
 
-    # 持久化存储 - 共享 WireGuard 配置
+    # 持久化存储 - 共享 WireGuard 配置，使用 Z 标志确保 SELinux 兼容性
     volumes:
-      - ./config/wireguard:/etc/wireguard
+      - ./config/wireguard:/etc/wireguard:rw
+      - ./config/wireguard/clients:/etc/wireguard/clients:rw
 
-    # 依赖服务
+    # 依赖服务 - 添加条件等待
     depends_on:
-      - wireguard
+      wireguard:
+        condition: service_healthy
 
     # 网络模式 - 需要访问宿主机网络以执行 wg 命令
     network_mode: host
+
+    # 添加特权以读取 WireGuard 配置
+    cap_add:
+      - NET_ADMIN
 
     # 日志配置
     logging:
