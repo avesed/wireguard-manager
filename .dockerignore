@@ -1,0 +1,60 @@
+# Git 相关
+.git/
+.gitignore
+.gitattributes
+
+# IDE 相关
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python 相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# 配置文件（敏感信息）
+config/
+*.key
+*.conf
+*.pem
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+
+# 文档相关
+*.md
+!README.md
+!DOCKER.md
+
+# 测试文件
+tests/
+test_*.py
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# 备份文件
+*.backup
+backup/

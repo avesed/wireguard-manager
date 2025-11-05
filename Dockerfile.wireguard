@@ -1,0 +1,47 @@
+# WireGuard Server Dockerfile
+FROM ubuntu:24.04
+
+LABEL maintainer="WireGuard Manager"
+LABEL description="WireGuard VPN Server with Web Management Interface"
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive
+ENV WG_INTERFACE=wg0
+ENV WG_PORT=51820
+ENV SERVER_VPN_IP=10.8.0.1/24
+
+# 安装依赖
+RUN apt-get update && apt-get install -y \
+    wireguard \
+    wireguard-tools \
+    iptables \
+    iproute2 \
+    net-tools \
+    curl \
+    qrencode \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建工作目录
+WORKDIR /app
+
+# 复制脚本
+COPY scripts/ /app/scripts/
+RUN chmod +x /app/scripts/*.sh
+
+# 创建 WireGuard 配置目录
+RUN mkdir -p /etc/wireguard /etc/wireguard/clients
+
+# 暴露端口
+EXPOSE 51820/udp
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wg show ${WG_INTERFACE} || exit 1
+
+# 启动脚本
+COPY docker/entrypoint-wg.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["start"]
