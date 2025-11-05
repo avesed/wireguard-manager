@@ -130,9 +130,24 @@ def get_clients():
         peer_blocks = re.findall(r'\[Peer\](.*?)(?=\[Peer\]|$)', config, re.DOTALL)
 
         for block in peer_blocks:
-            # 提取客户端名称（从注释中）
+            # 提取客户端名称（从注释中）- 更灵活的匹配模式
             name_match = re.search(r'#\s*客户端[：:]\s*(\S+)', block)
-            name = name_match.group(1) if name_match else 'Unknown'
+            # 如果标准格式不匹配，尝试其他常见格式
+            if not name_match:
+                name_match = re.search(r'#\s*[Cc]lient[：:\s]+(\S+)', block)
+            if not name_match:
+                name_match = re.search(r'#\s*(\S+)', block)  # 任何注释
+
+            # 对于真正的Unknown客户端，使用公钥的后8位作为标识
+            if name_match:
+                name = name_match.group(1)
+            else:
+                pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
+                if pubkey_match:
+                    pubkey = pubkey_match.group(1)
+                    name = f'Unknown-{pubkey[-8:]}'  # 使用公钥后8位
+                else:
+                    continue  # 跳过无效的peer块
 
             # 提取公钥
             pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
@@ -385,39 +400,111 @@ def api_delete_client(client_name):
     """删除客户端"""
     try:
         # 清理客户端名称
+        original_client_name = client_name
         client_name = re.sub(r'[^a-zA-Z0-9_-]', '', client_name)
+
+        # 验证客户端名称不为空
+        if not client_name:
+            return jsonify({'success': False, 'error': '客户端名称无效'})
 
         # 读取配置
         config_result = run_command(f'cat {WG_CONF}')
         if not config_result['success']:
-            return jsonify({'success': False, 'error': 'Cannot read config'})
+            return jsonify({'success': False, 'error': '无法读取配置文件'})
 
         config = config_result['stdout']
+        original_config = config
 
-        # 查找并删除客户端配置块
-        pattern = rf'# 客户端: {re.escape(client_name)}.*?\[Peer\].*?(?=# 客户端:|$)'
-        new_config = re.sub(pattern, '', config, flags=re.DOTALL)
+        # 尝试多种删除模式
+        patterns_to_try = []
+
+        # 1. 标准格式：# 客户端: name
+        patterns_to_try.append(rf'# 客户端: {re.escape(client_name)}.*?\[Peer\].*?(?=# 客户端:|$)')
+
+        # 2. 中文冒号格式：# 客户端： name
+        patterns_to_try.append(rf'# 客户端： {re.escape(client_name)}.*?\[Peer\].*?(?=# 客户端:|$)')
+
+        # 3. 英文格式：# Client: name
+        patterns_to_try.append(rf'# [Cc]lient: {re.escape(client_name)}.*?\[Peer\].*?(?=# [Cc]lient:|$)')
+
+        # 4. 对于Unknown-XXXXXX格式的客户端，尝试通过公钥匹配
+        if client_name.startswith('Unknown-'):
+            pubkey_suffix = client_name.split('-')[1]
+            # 找到包含该公钥后缀的peer块
+            peer_blocks = re.findall(r'(# .*?\[Peer\].*?)(?=# .*?\[Peer\]|$)', config, re.DOTALL)
+            for block in peer_blocks:
+                pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
+                if pubkey_match and pubkey_match.group(1).endswith(pubkey_suffix):
+                    # 构建精确的删除模式
+                    escaped_block = re.escape(block.strip())
+                    patterns_to_try.append(escaped_block)
+                    break
+
+        # 5. 通用注释格式：# name
+        patterns_to_try.append(rf'# {re.escape(client_name)}.*?\[Peer\].*?(?=# .*?\[Peer\]|$)')
+
+        new_config = config
+        deletion_successful = False
+
+        # 尝试每种模式
+        for pattern in patterns_to_try:
+            test_config = re.sub(pattern, '', new_config, flags=re.DOTALL)
+            if test_config != new_config:
+                new_config = test_config
+                deletion_successful = True
+                break
+
+        # 如果所有模式都失败，返回错误
+        if not deletion_successful:
+            return jsonify({
+                'success': False,
+                'error': f'未找到客户端 "{original_client_name}"。请检查配置文件或联系管理员。'
+            })
+
+        # 验证新配置不为空且仍包含[Interface]
+        if '[Interface]' not in new_config:
+            return jsonify({
+                'success': False,
+                'error': '删除操作会破坏配置文件结构，操作已取消'
+            })
 
         # 备份配置
-        run_command(f'cp {WG_CONF} {WG_CONF}.backup.$(date +%Y%m%d_%H%M%S)')
+        backup_result = run_command(f'cp {WG_CONF} {WG_CONF}.backup.$(date +%Y%m%d_%H%M%S)')
+        if not backup_result['success']:
+            return jsonify({'success': False, 'error': '无法创建配置备份'})
 
         # 写入新配置
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
             f.write(new_config)
             temp_file = f.name
 
-        run_command(f'cp {temp_file} {WG_CONF}')
+        copy_result = run_command(f'cp {temp_file} {WG_CONF}')
         os.unlink(temp_file)
 
-        # 删除客户端文件
-        run_command(f'rm -f {CLIENT_DIR}/{client_name}*')
+        if not copy_result['success']:
+            return jsonify({'success': False, 'error': '无法写入新配置'})
 
-        # 重新加载配置
-        run_command(f'wg syncconf {WG_INTERFACE} <(wg-quick strip {WG_INTERFACE})')
+        # 删除客户端文件（仅在客户端名称有效时）
+        if len(client_name) > 0:
+            run_command(f'rm -f {CLIENT_DIR}/{client_name}*')
+            # 对于Unknown-XXXXX格式，也删除可能的原始文件
+            if client_name.startswith('Unknown-'):
+                run_command(f'rm -f {CLIENT_DIR}/*{client_name.split("-")[1]}*')
 
-        return jsonify({'success': True})
+        # 重新加载配置并检查结果
+        reload_result = run_command(f'wg syncconf {WG_INTERFACE} <(wg-quick strip {WG_INTERFACE})')
+        if not reload_result['success']:
+            # 如果重新加载失败，尝试恢复备份
+            run_command(f'cp {WG_CONF}.backup.$(date +%Y%m%d_%H%M%S) {WG_CONF}')
+            return jsonify({'success': False, 'error': 'WireGuard配置重新加载失败，已恢复备份'})
+
+        return jsonify({
+            'success': True,
+            'message': f'客户端 "{original_client_name}" 已成功删除'
+        })
+
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': f'删除过程中发生错误: {str(e)}'})
 
 
 if __name__ == '__main__':
