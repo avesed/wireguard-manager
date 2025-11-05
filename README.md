@@ -2,6 +2,7 @@
 
 🔒 一个完整的 WireGuard VPN 服务器管理工具集，包含自动化安装、Web 管理界面和客户端管理功能。
 
+<<<<<<< HEAD
 ## 📦 项目结构
 
 ```
@@ -29,6 +30,8 @@ wireguard-manager/
         └── index.html           # Web 前端界面
 ```
 
+=======
+>>>>>>> e299fedc6a5275352f6aff27a637d6e147e8fb14
 ## 🚀 快速开始
 
 ### 🐳 方式1：Docker 部署（推荐）
@@ -276,23 +279,3 @@ sudo chmod 600 /etc/wireguard/*.conf
 - 内存: 512MB
 - 存储: 1GB 可用空间
 - 网络: 公网 IP 地址
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request 来改进这个项目！
-
-## 📄 许可证
-
-MIT License - 详见 LICENSE 文件
-
-## 🙏 致谢
-
-感谢 WireGuard 团队开发了这个优秀的 VPN 解决方案。
-
----
-
-**快速链接：**
-- [WireGuard 官网](https://www.wireguard.com/)
-- [安装指南](#快速开始)
-- [故障排除](#故障排除)
-- [安全建议](#安全建议)
