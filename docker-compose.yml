@@ -33,10 +33,10 @@ services:
       - ./config/wireguard:/etc/wireguard
       - /lib/modules:/lib/modules:ro
 
-    # 系统控制
-    sysctls:
-      - net.ipv4.ip_forward=1
-      - net.ipv4.conf.all.forwarding=1
+    # 注意: 使用 host 网络模式时不能设置 sysctls
+    # 需要在宿主机上手动启用 IP 转发:
+    # echo 1 > /proc/sys/net/ipv4/ip_forward
+    # echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
 
     # 日志配置
     logging:

@@ -34,6 +34,17 @@ echo ""
 # 创建配置目录
 mkdir -p config/wireguard/clients
 
+# 启用 IP 转发 (WireGuard 需要)
+echo "启用 IP 转发..."
+if [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "1" ]; then
+    echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward >/dev/null
+    echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf >/dev/null 2>&1 || true
+    echo "✓ IP 转发已启用"
+else
+    echo "✓ IP 转发已启用"
+fi
+echo ""
+
 # 检测服务器 IP
 SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "")
 if [ -z "$SERVER_IP" ]; then
