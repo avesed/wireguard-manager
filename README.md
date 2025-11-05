@@ -17,15 +17,13 @@ wireguard-manager/
 ├── docker/                      # Docker 相关文件
 │   └── entrypoint-wg.sh         # WireGuard 容器启动脚本
 ├── scripts/                     # 核心脚本目录
-│   ├── install_wireguard.sh     # WireGuard 服务端安装脚本
-│   ├── uninstall_wireguard.sh   # WireGuard 完全卸载脚本
-│   ├── add_wireguard_client.sh  # 添加客户端脚本
-│   ├── wg_diagnostic.sh         # 系统诊断脚本
-│   └── fix_sysctl_warnings.sh   # 修复系统警告脚本
+│   ├── install_wireguard.sh     # WireGuard 安装脚本（精简）
+│   ├── uninstall_wireguard.sh   # WireGuard 卸载脚本（精简）
+│   ├── add_wireguard_client.sh  # 添加客户端脚本（精简）
+│   └── wg_diagnostic.sh         # 诊断脚本（精简）
 └── web/                         # Web 管理界面
     ├── app.py                   # Flask 后端应用
     ├── requirements.txt         # Python 依赖
-    ├── install_wireguard_web.sh # Web 界面安装脚本
     ├── DEPLOY.md                # Web 部署指南
     └── templates/
         └── index.html           # Web 前端界面
