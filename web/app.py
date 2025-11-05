@@ -101,6 +101,92 @@ def get_server_info():
         return {'error': str(e)}
 
 
+def _parse_peer_data(peer_data, wg_output):
+    """
+    解析单个peer块的数据（包括前置注释）
+
+    Args:
+        peer_data: 包含注释和peer内容的完整文本块
+        wg_output: wg show命令的输出，用于获取连接状态
+
+    Returns:
+        dict: 客户端信息字典，如果解析失败返回None
+    """
+    # 提取客户端名称（从注释中）- 只使用精确匹配
+    name_match = None
+
+    # 1. 标准中文格式：# 客户端: name 或 # 客户端： name
+    name_match = re.search(r'#\s*客户端[：:]\s*(\S+)', peer_data)
+
+    # 2. 英文格式：# Client: name
+    if not name_match:
+        name_match = re.search(r'#\s*[Cc]lient\s*[：:]\s*(\S+)', peer_data)
+
+    # 3. 简化格式：# name （但要确保不是关键词）
+    if not name_match:
+        simple_match = re.search(r'#\s*([a-zA-Z0-9_-]+)\s*$', peer_data, re.MULTILINE)
+        if simple_match:
+            candidate_name = simple_match.group(1)
+            # 排除明显的关键词，避免误匹配
+            excluded_words = ['Peer', 'peer', 'PublicKey', 'AllowedIPs', 'Endpoint', 'PersistentKeepalive']
+            if candidate_name not in excluded_words and len(candidate_name) > 1:
+                name_match = simple_match
+
+    # 提取公钥
+    pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', peer_data)
+    if not pubkey_match:
+        return None  # 无效的peer块
+    pubkey = pubkey_match.group(1)
+
+    # 对于真正无法识别的客户端，使用公钥后8位作为标识
+    if name_match:
+        name = name_match.group(1)
+    else:
+        # 使用URL安全的公钥后缀，去除特殊字符
+        safe_suffix = pubkey.replace('+', '').replace('=', '').replace('/', '')[-8:]
+        name = f'Unknown-{safe_suffix}'
+
+    # 提取 IP
+    ip_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', peer_data)
+    ip = ip_match.group(1).replace('/32', '') if ip_match else 'N/A'
+
+    # 从 wg show 中获取连接状态
+    peer_pattern = f'peer: {re.escape(pubkey)}(.*?)(?=peer:|$)'
+    peer_info = re.search(peer_pattern, wg_output, re.DOTALL)
+
+    status = 'offline'
+    last_handshake = 'Never'
+    transfer_rx = '0 B'
+    transfer_tx = '0 B'
+
+    if peer_info:
+        peer_data_status = peer_info.group(1)
+
+        # 检查最后握手时间
+        handshake_match = re.search(r'latest handshake:\s*(.+)', peer_data_status)
+        if handshake_match:
+            last_handshake = handshake_match.group(1).strip()
+            status = 'online' if 'second' in last_handshake or 'minute' in last_handshake else 'offline'
+
+        # 传输数据
+        rx_match = re.search(r'transfer:\s*([^\s]+)\s+received', peer_data_status)
+        tx_match = re.search(r'received,\s*([^\s]+)\s+sent', peer_data_status)
+        if rx_match:
+            transfer_rx = rx_match.group(1)
+        if tx_match:
+            transfer_tx = tx_match.group(1)
+
+    return {
+        'name': name,
+        'public_key': pubkey,
+        'ip': ip,
+        'status': status,
+        'last_handshake': last_handshake,
+        'transfer_rx': transfer_rx,
+        'transfer_tx': transfer_tx
+    }
+
+
 def get_clients():
     """获取所有客户端信息"""
     try:
@@ -127,87 +213,66 @@ def get_clients():
         wg_output = wg_show['stdout'] if wg_show['success'] else ''
 
         clients = []
-        peer_blocks = re.findall(r'\[Peer\](.*?)(?=\[Peer\]|$)', config, re.DOTALL)
 
-        for block in peer_blocks:
-            # 提取客户端名称（从注释中）- 只使用精确匹配
-            name_match = None
+        # 使用状态机方法解析配置，正确捕获 [Peer] 之前的注释
+        lines = config.split('\n')
+        in_interface = False
+        in_peer = False
+        peer_comment_lines = []  # 当前peer前的注释行
+        peer_content_lines = []  # 当前peer块的内容行
 
-            # 1. 标准中文格式：# 客户端: name 或 # 客户端： name
-            name_match = re.search(r'#\s*客户端[：:]\s*(\S+)', block)
+        for line in lines:
+            stripped = line.strip()
 
-            # 2. 英文格式：# Client: name
-            if not name_match:
-                name_match = re.search(r'#\s*[Cc]lient\s*[：:]\s*(\S+)', block)
+            # 检测 [Interface]
+            if stripped == '[Interface]':
+                in_interface = True
+                in_peer = False
 
-            # 3. 简化格式：# name （但要确保不是关键词）
-            if not name_match:
-                simple_match = re.search(r'#\s*([a-zA-Z0-9_-]+)\s*$', block, re.MULTILINE)
-                if simple_match:
-                    candidate_name = simple_match.group(1)
-                    # 排除明显的关键词，避免误匹配
-                    excluded_words = ['Peer', 'peer', 'PublicKey', 'AllowedIPs', 'Endpoint', 'PersistentKeepalive']
-                    if candidate_name not in excluded_words and len(candidate_name) > 1:
-                        name_match = simple_match
+            # 检测 [Peer]
+            elif stripped == '[Peer]':
+                # 保存之前的peer（如果存在）
+                if in_peer and peer_content_lines:
+                    # 处理上一个peer
+                    peer_data = '\n'.join(peer_comment_lines + peer_content_lines)
+                    client = _parse_peer_data(peer_data, wg_output)
+                    if client:
+                        clients.append(client)
+                    # 重置注释列表，防止注释被关联到错误的peer
+                    peer_comment_lines = []
 
-            # 对于真正无法识别的客户端，使用公钥后8位作为标识
-            if name_match:
-                name = name_match.group(1)
+                # 开始新的peer块
+                in_interface = False
+                in_peer = True
+                peer_content_lines = [line]
+                # peer_comment_lines 已经包含了之前收集的注释
+
+            # 在interface块中
+            elif in_interface:
+                pass  # 忽略interface块的内容
+
+            # 在peer块中
+            elif in_peer:
+                peer_content_lines.append(line)
+
+            # 不在任何section中（可能是peer的注释或空行）
             else:
-                pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
-                if pubkey_match:
-                    pubkey = pubkey_match.group(1)
-                    # 使用URL安全的公钥后缀，去除特殊字符
-                    safe_suffix = pubkey.replace('+', '').replace('=', '').replace('/', '')[-8:]
-                    name = f'Unknown-{safe_suffix}'
-                else:
-                    continue  # 跳过无效的peer块
+                if stripped.startswith('#'):
+                    # 这是注释行，可能是下一个peer的注释
+                    peer_comment_lines.append(line)
+                elif not stripped:
+                    # 空行
+                    if peer_comment_lines:
+                        # 如果之前有注释，这个空行属于注释部分
+                        peer_comment_lines.append(line)
+                # 其他行忽略
 
-            # 提取公钥
-            pubkey_match = re.search(r'PublicKey\s*=\s*([^\s]+)', block)
-            if not pubkey_match:
-                continue
-            pubkey = pubkey_match.group(1)
-
-            # 提取 IP
-            ip_match = re.search(r'AllowedIPs\s*=\s*([^\s]+)', block)
-            ip = ip_match.group(1).replace('/32', '') if ip_match else 'N/A'
-
-            # 从 wg show 中获取连接状态
-            peer_pattern = f'peer: {re.escape(pubkey)}(.*?)(?=peer:|$)'
-            peer_info = re.search(peer_pattern, wg_output, re.DOTALL)
-
-            status = 'offline'
-            last_handshake = 'Never'
-            transfer_rx = '0 B'
-            transfer_tx = '0 B'
-
-            if peer_info:
-                peer_data = peer_info.group(1)
-
-                # 检查最后握手时间
-                handshake_match = re.search(r'latest handshake:\s*(.+)', peer_data)
-                if handshake_match:
-                    last_handshake = handshake_match.group(1).strip()
-                    status = 'online' if 'second' in last_handshake or 'minute' in last_handshake else 'offline'
-
-                # 传输数据
-                rx_match = re.search(r'transfer:\s*([^\s]+)\s+received', peer_data)
-                tx_match = re.search(r'received,\s*([^\s]+)\s+sent', peer_data)
-                if rx_match:
-                    transfer_rx = rx_match.group(1)
-                if tx_match:
-                    transfer_tx = tx_match.group(1)
-
-            clients.append({
-                'name': name,
-                'public_key': pubkey,
-                'ip': ip,
-                'status': status,
-                'last_handshake': last_handshake,
-                'transfer_rx': transfer_rx,
-                'transfer_tx': transfer_tx
-            })
+        # 处理最后一个peer块（如果存在）
+        if in_peer and peer_content_lines:
+            peer_data = '\n'.join(peer_comment_lines + peer_content_lines)
+            client = _parse_peer_data(peer_data, wg_output)
+            if client:
+                clients.append(client)
 
         # 检测重复的公钥
         pubkey_count = {}
