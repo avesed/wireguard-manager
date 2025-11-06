@@ -37,6 +37,9 @@ CLIENT_DIR = f"{WG_DIR}/clients"
 # 用户数据存储
 USERS_FILE = f"{WG_DIR}/users.json"
 
+# 流量数据存储
+TRAFFIC_FILE = f"{WG_DIR}/traffic.json"
+
 # 用户模型
 class User(UserMixin):
     def __init__(self, username, password_hash=None):
@@ -113,6 +116,96 @@ def init_default_user():
             print("❌ 创建默认用户失败")
 
     return users
+
+
+# 流量数据管理
+def load_traffic_data():
+    """加载流量数据"""
+    try:
+        if os.path.exists(TRAFFIC_FILE):
+            result = run_command(f'cat {TRAFFIC_FILE}', use_sudo=False)
+            if not result['success']:
+                result = run_command(f'cat {TRAFFIC_FILE}')
+            if result['success']:
+                return json.loads(result['stdout'])
+        return {}
+    except Exception as e:
+        print(f"Error loading traffic data: {e}")
+        return {}
+
+
+def save_traffic_data(traffic_data):
+    """保存流量数据"""
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            json.dump(traffic_data, f, indent=2)
+            temp_file = f.name
+
+        run_command(f'mkdir -p {WG_DIR}')
+        result = run_command(f'cp {temp_file} {TRAFFIC_FILE}')
+        run_command(f'chmod 600 {TRAFFIC_FILE}')
+        os.unlink(temp_file)
+
+        return result['success']
+    except Exception as e:
+        print(f"Error saving traffic data: {e}")
+        return False
+
+
+def parse_transfer_size(size_str):
+    """将流量字符串转换为字节数（支持二进制和十进制单位）"""
+    if not size_str or size_str == '0 B':
+        return 0
+
+    # 二进制单位（1024为基数）
+    binary_units = {
+        'B': 1,
+        'KiB': 1024,
+        'MiB': 1024**2,
+        'GiB': 1024**3,
+        'TiB': 1024**4
+    }
+
+    # 十进制单位（1000为基数）
+    decimal_units = {
+        'B': 1,
+        'KB': 1000,
+        'MB': 1000**2,
+        'GB': 1000**3,
+        'TB': 1000**4
+    }
+
+    match = re.match(r'([\d.]+)\s*(\w+)', size_str)
+    if match:
+        value = float(match.group(1))
+        unit = match.group(2)
+        # 优先匹配二进制单位，然后匹配十进制单位
+        multiplier = binary_units.get(unit) or decimal_units.get(unit, 1)
+        return int(value * multiplier)
+    return 0
+
+
+def format_bytes(bytes_value):
+    """将字节数转换为十进制单位（MB, GB, TB）"""
+    if bytes_value == 0:
+        return '0 B'
+
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    unit_index = 0
+    value = float(bytes_value)
+
+    # 使用1000为基数（十进制）
+    while value >= 1000 and unit_index < len(units) - 1:
+        value /= 1000
+        unit_index += 1
+
+    # 格式化输出
+    if value >= 100:
+        return f'{value:.1f} {units[unit_index]}'
+    elif value >= 10:
+        return f'{value:.2f} {units[unit_index]}'
+    else:
+        return f'{value:.2f} {units[unit_index]}'
 
 
 @login_manager.user_loader
@@ -279,6 +372,52 @@ def _parse_peer_data(peer_data, wg_output):
         if tx_match:
             transfer_tx = tx_match.group(1)
 
+    # 流量持久化和累计计算
+    traffic_data = load_traffic_data()
+
+    # 解析当前流量为字节数
+    current_rx_bytes = parse_transfer_size(transfer_rx)
+    current_tx_bytes = parse_transfer_size(transfer_tx)
+
+    # 获取或初始化该客户端的流量记录
+    if name not in traffic_data:
+        traffic_data[name] = {
+            'accumulated_rx': 0,
+            'accumulated_tx': 0,
+            'last_rx': 0,
+            'last_tx': 0,
+            'last_update': datetime.now().isoformat()
+        }
+
+    client_traffic = traffic_data[name]
+
+    # 检测流量重置（当前流量小于上次记录的流量）
+    # 这通常发生在系统重启或 WireGuard 接口重启时
+    if current_rx_bytes < client_traffic['last_rx']:
+        # 发生重置，将上次的流量值累加到累计值中
+        client_traffic['accumulated_rx'] += client_traffic['last_rx']
+
+    if current_tx_bytes < client_traffic['last_tx']:
+        # 发生重置，将上次的流量值累加到累计值中
+        client_traffic['accumulated_tx'] += client_traffic['last_tx']
+
+    # 计算总流量（累计 + 当前）
+    total_rx_bytes = client_traffic['accumulated_rx'] + current_rx_bytes
+    total_tx_bytes = client_traffic['accumulated_tx'] + current_tx_bytes
+    total_bytes = total_rx_bytes + total_tx_bytes
+
+    # 更新记录
+    client_traffic['last_rx'] = current_rx_bytes
+    client_traffic['last_tx'] = current_tx_bytes
+    client_traffic['last_update'] = datetime.now().isoformat()
+
+    # 保存流量数据
+    traffic_data[name] = client_traffic
+    save_traffic_data(traffic_data)
+
+    # 格式化总流量（使用十进制单位）
+    transfer_total = format_bytes(total_bytes)
+
     return {
         'name': name,
         'public_key': pubkey,
@@ -286,7 +425,8 @@ def _parse_peer_data(peer_data, wg_output):
         'status': status,
         'last_handshake': last_handshake,
         'transfer_rx': transfer_rx,
-        'transfer_tx': transfer_tx
+        'transfer_tx': transfer_tx,
+        'transfer_total': transfer_total
     }
 
 
@@ -970,6 +1110,12 @@ def api_delete_client(client_name):
             # strip失败，恢复备份
             run_command(f'ls -t {WG_CONF}.backup.* | head -1 | xargs -I {{}} cp {{}} {WG_CONF}')
             return jsonify({'success': False, 'error': f'配置验证失败: {strip_result.get("stderr", "未知错误")}，已恢复备份'})
+
+        # 删除流量记录
+        traffic_data = load_traffic_data()
+        if client_name in traffic_data:
+            del traffic_data[client_name]
+            save_traffic_data(traffic_data)
 
         return jsonify({
             'success': True,
