@@ -1,14 +1,8 @@
 # WireGuard Manager
 
-🔒 基于 Docker 的 WireGuard VPN 管理工具，支持一键部署和Web管理界面。
+基于 Docker 的 WireGuard VPN 管理工具，支持一键部署和Web管理界面。
 
-## 🚀 快速开始
-
-### 前提条件
-
-- Docker 20.10+
-- 公网IP地址
-- Ubuntu 18.04+ / Debian 10+ / CentOS 8+ / RHEL 8+
+## 快速开始
 
 ### 一键部署
 
@@ -23,34 +17,7 @@ sudo bash docker-deploy.sh
 
 部署完成后，登录凭据会显示在终端并保存到 `config/web-credentials.txt`
 
-### 使用自定义密码部署（推荐）
-
-```bash
-# 设置环境变量
-export ADMIN_USERNAME="admin"
-export ADMIN_PASSWORD="your_strong_password"
-export SECRET_KEY="$(openssl rand -hex 32)"
-
-# 部署
-sudo -E bash docker-deploy.sh
-```
-
-### 分步部署
-
-```bash
-# 1. 启动 WireGuard 容器
-sudo bash start-wireguard.sh
-
-# 2. 配置认证信息
-export ADMIN_USERNAME="admin"
-export ADMIN_PASSWORD="your_strong_password"
-export SECRET_KEY="$(openssl rand -hex 32)"
-
-# 3. 启动 Web 管理界面
-sudo -E bash start-web.sh
-```
-
-## 🌐 访问Web界面
+## 访问Web界面
 
 部署完成后访问：`http://YOUR_SERVER_IP:8080`
 
@@ -58,7 +25,7 @@ sudo -E bash start-web.sh
 - 用户名：`admin`
 - 密码：部署时生成（查看终端或 `config/web-credentials.txt`）
 
-## 🔧 管理命令
+## 管理命令
 
 ### 查看状态
 
@@ -101,7 +68,7 @@ sudo -E bash start-web.sh
 sudo bash cleanup-wireguard.sh
 ```
 
-## 🔐 安全建议
+## 安全建议
 
 ### 1. 使用强密码
 
@@ -127,14 +94,14 @@ sudo ufw allow 51820/udp
 sudo ufw enable
 ```
 
-## 📂 配置文件
+## 配置文件
 
 - **WireGuard配置**：`config/wireguard/wg0.conf`
 - **客户端配置**：`config/wireguard/clients/`
 - **用户数据**：`config/wireguard/users.json`
 - **登录凭据**：`config/web-credentials.txt`
 
-## 🔐 身份认证
+## 身份认证
 
 ### 环境变量
 
@@ -158,7 +125,7 @@ source .env
 sudo -E bash docker-deploy.sh
 ```
 
-## 🐛 故障排除
+## 故障排除
 
 ### Web界面无法访问
 
@@ -199,15 +166,6 @@ docker logs wireguard-vpn
 sudo docker restart wireguard-vpn
 ```
 
-## 📚 详细文档
+## 详细文档
 
-- **[Docker部署指南](DOCKER_DEPLOY.md)** - 完整的Docker部署说明
-- **[身份认证说明](web/AUTH_README.md)** - 认证系统详细文档
 - **[环境变量配置](.env.example)** - 配置示例文件
-
-## 📋 系统要求
-
-- Ubuntu 18.04+ / Debian 10+ / CentOS 8+ / RHEL 8+
-- Docker 20.10+
-- 最低配置：1核CPU、512MB内存、1GB存储
-- 需要公网IP地址
