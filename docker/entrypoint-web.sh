@@ -52,6 +52,26 @@ else
 fi
 
 echo ""
+echo "=========================================="
+echo "🔒 Authentication Enabled"
+echo "=========================================="
+
+# 显示认证配置信息
+ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+
+echo "Login credentials:"
+echo "  Username: $ADMIN_USERNAME"
+if [ "$ADMIN_PASSWORD" = "admin123" ]; then
+    echo "  Password: $ADMIN_PASSWORD (DEFAULT)"
+    echo ""
+    echo "  ⚠️  WARNING: Using default password!"
+    echo "  Please change it after first login!"
+else
+    echo "  Password: (configured via environment)"
+fi
+
+echo ""
 echo "Starting Web UI on port 8080..."
 echo "=========================================="
 

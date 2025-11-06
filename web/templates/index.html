@@ -321,8 +321,17 @@
     <div class="container">
         <!-- 头部 -->
         <div class="header">
-            <h1>🔒 WireGuard 管理面板</h1>
-            <p class="subtitle">轻松管理您的 VPN 服务器和客户端</p>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1>🔒 WireGuard 管理面板</h1>
+                    <p class="subtitle">轻松管理您的 VPN 服务器和客户端</p>
+                </div>
+                <div>
+                    <button class="btn btn-secondary" onclick="logout()" style="padding: 8px 16px;">
+                        🚪 注销
+                    </button>
+                </div>
+            </div>
         </div>
 
         <!-- 统计卡片 -->
@@ -630,6 +639,13 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // 注销
+        function logout() {
+            if (confirm('确定要注销吗？')) {
+                window.location.href = '/logout';
+            }
         }
 
         // 点击模态框外部关闭

@@ -1,147 +1,213 @@
-# WireGuard 管理器
+# WireGuard Manager
 
-🔒 完整的 WireGuard VPN 服务器管理工具，支持自动化安装、Web 界面和客户端管理。
+🔒 基于 Docker 的 WireGuard VPN 管理工具，支持一键部署和Web管理界面。
 
 ## 🚀 快速开始
 
-### 🐳 Docker 部署（推荐）
+### 前提条件
+
+- Docker 20.10+
+- 公网IP地址
+- Ubuntu 18.04+ / Debian 10+ / CentOS 8+ / RHEL 8+
+
+### 一键部署
 
 ```bash
+# 克隆项目
 git clone https://github.com/avesed/wireguard-manager.git
 cd wireguard-manager
 
-# 设置脚本权限
-chmod +x setup-permissions.sh && ./setup-permissions.sh
-
-# 一键部署
-sudo ./docker-deploy.sh
+# 一键部署（自动生成密码）
+sudo bash docker-deploy.sh
 ```
 
-**或者分步部署：**
+部署完成后，登录凭据会显示在终端并保存到 `config/web-credentials.txt`
+
+### 使用自定义密码部署（推荐）
 
 ```bash
-# 1. 先启动 WireGuard 容器
-sudo ./start-wireguard.sh
+# 设置环境变量
+export ADMIN_USERNAME="admin"
+export ADMIN_PASSWORD="your_strong_password"
+export SECRET_KEY="$(openssl rand -hex 32)"
 
-# 2. 等待 WireGuard 启动完成，然后启动 Web 界面
-sudo ./start-web.sh
+# 部署
+sudo -E bash docker-deploy.sh
 ```
 
-访问：`http://YOUR_SERVER_IP:8080`
-
-### 📜 脚本部署
+### 分步部署
 
 ```bash
-# 1. 安装 WireGuard
-sudo bash scripts/install_wireguard.sh
+# 1. 启动 WireGuard 容器
+sudo bash start-wireguard.sh
 
-# 2. 部署 Web 界面（可选）
-sudo bash deploy_wireguard_web.sh
+# 2. 配置认证信息
+export ADMIN_USERNAME="admin"
+export ADMIN_PASSWORD="your_strong_password"
+export SECRET_KEY="$(openssl rand -hex 32)"
 
-# 3. 添加客户端
-sudo bash scripts/add_wireguard_client.sh
+# 3. 启动 Web 管理界面
+sudo -E bash start-web.sh
 ```
 
-访问：`http://YOUR_SERVER_IP:8080`
+## 🌐 访问Web界面
 
-## 📋 功能特性
+部署完成后访问：`http://YOUR_SERVER_IP:8080`
 
-### 核心脚本
-- **install_wireguard.sh** - 自动安装、配置防火墙和 IP 转发
-- **add_wireguard_client.sh** - 智能 IP 分配、生成密钥和二维码
-- **uninstall_wireguard.sh** - 完全清理并备份配置
-- **wg_diagnostic.sh** - 系统检查和网络诊断
-
-### Web 管理界面
-- 实时监控服务器和客户端状态
-- 添加/删除客户端、查看配置
-- 生成二维码、一键复制配置
-- 响应式设计，支持移动端
+**默认凭据**：
+- 用户名：`admin`
+- 密码：部署时生成（查看终端或 `config/web-credentials.txt`）
 
 ## 🔧 管理命令
 
-### Docker 容器管理
+### 查看状态
 
 ```bash
-# 查看容器状态
+# 查看容器
 docker ps
 
 # 查看日志
-docker logs -f wireguard-vpn      # WireGuard 日志
-docker logs -f wireguard-web-ui   # Web 界面日志
-
-# 重启容器
-docker restart wireguard-vpn
-docker restart wireguard-web-ui
-
-# 停止容器
-docker stop wireguard-vpn wireguard-web-ui
-
-# 进入容器调试
-docker exec -it wireguard-vpn bash
-docker exec -it wireguard-web-ui bash
-
-# 清理环境
-./cleanup-wireguard.sh
+docker logs -f wireguard-vpn       # WireGuard
+docker logs -f wireguard-web-ui     # Web界面
 ```
 
-### 传统服务管理
+### 重启服务
 
 ```bash
-# WireGuard 服务
-sudo systemctl start/stop/restart wg-quick@wg0
-sudo wg show
+# 重启Web界面
+sudo docker restart wireguard-web-ui
 
-# Web 界面
-sudo systemctl start/stop/restart wireguard-web
-sudo journalctl -u wireguard-web -f
+# 重启WireGuard
+sudo docker restart wireguard-vpn
+```
 
-# 诊断
-sudo bash scripts/wg_diagnostic.sh
+### 修改密码
+
+```bash
+# 停止容器
+sudo docker stop wireguard-web-ui
+
+# 删除用户数据
+sudo rm config/wireguard/users.json
+
+# 设置新密码并重启
+export ADMIN_PASSWORD="new_strong_password"
+sudo -E bash start-web.sh
+```
+
+### 清理环境
+
+```bash
+sudo bash cleanup-wireguard.sh
+```
+
+## 🔐 安全建议
+
+### 1. 使用强密码
+
+- 至少12位字符
+- 包含大小写字母、数字和特殊字符
+- 不使用常见密码
+
+生成强密码：
+```bash
+openssl rand -base64 16
+```
+
+### 2. 配置防火墙
+
+```bash
+# 限制Web界面访问IP
+sudo ufw allow from YOUR_IP to any port 8080
+
+# 允许WireGuard端口
+sudo ufw allow 51820/udp
+
+# 启用防火墙
+sudo ufw enable
 ```
 
 ## 📂 配置文件
 
-- 服务端：`/etc/wireguard/wg0.conf`
-- 客户端：`/etc/wireguard/clients/`
+- **WireGuard配置**：`config/wireguard/wg0.conf`
+- **客户端配置**：`config/wireguard/clients/`
+- **用户数据**：`config/wireguard/users.json`
+- **登录凭据**：`config/web-credentials.txt`
 
-## 🔒 安全建议
+## 🔐 身份认证
+
+### 环境变量
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `ADMIN_USERNAME` | 管理员用户名 | `admin` |
+| `ADMIN_PASSWORD` | 管理员密码 | 自动生成 |
+| `SECRET_KEY` | Flask会话密钥 | 自动生成 |
+
+### 使用.env文件配置
 
 ```bash
-# 使用 SSH 隧道访问（推荐）
-ssh -L 8080:localhost:8080 user@your_server
+# 复制示例文件
+cp .env.example .env
 
-# 限制 Web 界面访问 IP
-sudo ufw allow from YOUR_IP to any port 8080
+# 编辑配置
+nano .env
 
-# 只开放必要端口
-sudo ufw allow 51820/udp
+# 加载环境变量并部署
+source .env
+sudo -E bash docker-deploy.sh
 ```
-
-- 定期更新系统和 WireGuard
-- 删除未使用的客户端
-- 定期备份配置文件
 
 ## 🐛 故障排除
 
-```bash
-# 运行诊断脚本
-sudo bash scripts/wg_diagnostic.sh
+### Web界面无法访问
 
-# 检查服务状态
-sudo systemctl status wg-quick@wg0
-sudo systemctl status wireguard-web
+```bash
+# 检查容器状态
+docker ps
 
 # 查看日志
-sudo journalctl -u wireguard-web -n 50
+docker logs wireguard-web-ui
 
-# 检查权限
-sudo chown -R root:root /etc/wireguard/
-sudo chmod 600 /etc/wireguard/*.conf
+# 重启容器
+sudo docker restart wireguard-web-ui
 ```
 
-## 📝 系统要求
+### 忘记密码
+
+```bash
+# 删除用户数据
+sudo rm config/wireguard/users.json
+
+# 重启容器
+sudo docker restart wireguard-web-ui
+
+# 查看新密码
+sudo docker logs wireguard-web-ui | grep -A 5 "credentials"
+```
+
+### WireGuard连接失败
+
+```bash
+# 查看WireGuard状态
+docker exec wireguard-vpn wg show
+
+# 查看日志
+docker logs wireguard-vpn
+
+# 重启WireGuard
+sudo docker restart wireguard-vpn
+```
+
+## 📚 详细文档
+
+- **[Docker部署指南](DOCKER_DEPLOY.md)** - 完整的Docker部署说明
+- **[身份认证说明](web/AUTH_README.md)** - 认证系统详细文档
+- **[环境变量配置](.env.example)** - 配置示例文件
+
+## 📋 系统要求
 
 - Ubuntu 18.04+ / Debian 10+ / CentOS 8+ / RHEL 8+
-- 最低配置：1 核 CPU、512MB 内存、1GB 存储
-- 需要公网 IP 地址
+- Docker 20.10+
+- 最低配置：1核CPU、512MB内存、1GB存储
+- 需要公网IP地址

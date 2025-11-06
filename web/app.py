@@ -3,7 +3,8 @@
 WireGuard Web 管理界面 - Flask 后端
 """
 
-from flask import Flask, render_template, jsonify, request, send_file
+from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, flash, session
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 import subprocess
 import os
 import re
@@ -12,14 +13,116 @@ from datetime import datetime
 import tempfile
 import base64
 from io import BytesIO
+import bcrypt
+from functools import wraps
 
 app = Flask(__name__)
+
+# 安全配置
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(24).hex())
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 会话1小时后过期
+
+# Flask-Login 配置
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message = '请先登录以访问此页面'
 
 # 配置
 WG_INTERFACE = "wg0"
 WG_DIR = "/etc/wireguard"
 WG_CONF = f"{WG_DIR}/{WG_INTERFACE}.conf"
 CLIENT_DIR = f"{WG_DIR}/clients"
+
+# 用户数据存储
+USERS_FILE = f"{WG_DIR}/users.json"
+
+# 用户模型
+class User(UserMixin):
+    def __init__(self, username, password_hash=None):
+        self.id = username
+        self.username = username
+        self.password_hash = password_hash
+
+    def check_password(self, password):
+        """验证密码"""
+        if not self.password_hash:
+            return False
+        return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
+
+    @staticmethod
+    def hash_password(password):
+        """生成密码哈希"""
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+# 用户数据管理
+def load_users():
+    """加载用户数据"""
+    try:
+        if os.path.exists(USERS_FILE):
+            result = run_command(f'cat {USERS_FILE}', use_sudo=False)
+            if not result['success']:
+                result = run_command(f'cat {USERS_FILE}')
+            if result['success']:
+                return json.loads(result['stdout'])
+        return {}
+    except Exception as e:
+        print(f"Error loading users: {e}")
+        return {}
+
+
+def save_users(users_data):
+    """保存用户数据"""
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            json.dump(users_data, f, indent=2)
+            temp_file = f.name
+
+        run_command(f'mkdir -p {WG_DIR}')
+        result = run_command(f'cp {temp_file} {USERS_FILE}')
+        run_command(f'chmod 600 {USERS_FILE}')
+        os.unlink(temp_file)
+
+        return result['success']
+    except Exception as e:
+        print(f"Error saving users: {e}")
+        return False
+
+
+def init_default_user():
+    """初始化默认管理员用户"""
+    users = load_users()
+
+    # 如果没有用户，创建默认管理员
+    if not users:
+        default_username = os.environ.get('ADMIN_USERNAME', 'admin')
+        default_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
+
+        users[default_username] = {
+            'username': default_username,
+            'password_hash': User.hash_password(default_password)
+        }
+
+        if save_users(users):
+            print(f"✅ 默认管理员账户已创建: {default_username}")
+            if not os.environ.get('ADMIN_PASSWORD'):
+                print(f"⚠️  警告: 使用默认密码 'admin123'，请尽快修改！")
+                print(f"   可通过环境变量 ADMIN_USERNAME 和 ADMIN_PASSWORD 自定义")
+        else:
+            print("❌ 创建默认用户失败")
+
+    return users
+
+
+@login_manager.user_loader
+def load_user(username):
+    """Flask-Login 用户加载回调"""
+    users = load_users()
+    if username in users:
+        user_data = users[username]
+        return User(user_data['username'], user_data['password_hash'])
+    return None
 
 
 def run_command(cmd, use_sudo=True):
@@ -361,13 +464,59 @@ def generate_qrcode(config_text):
         return None
 
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """登录页面"""
+    # 如果已登录，重定向到主页
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+
+        if not username or not password:
+            flash('请输入用户名和密码', 'error')
+            return render_template('login.html')
+
+        users = load_users()
+        if username in users:
+            user_data = users[username]
+            user = User(user_data['username'], user_data['password_hash'])
+
+            if user.check_password(password):
+                login_user(user, remember=True)
+                flash('登录成功！', 'success')
+
+                # 重定向到原始请求页面或主页
+                next_page = request.args.get('next')
+                return redirect(next_page) if next_page else redirect(url_for('index'))
+            else:
+                flash('用户名或密码错误', 'error')
+        else:
+            flash('用户名或密码错误', 'error')
+
+    return render_template('login.html')
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    """注销"""
+    logout_user()
+    flash('已成功注销', 'success')
+    return redirect(url_for('login'))
+
+
 @app.route('/')
+@login_required
 def index():
     """主页"""
     return render_template('index.html')
 
 
 @app.route('/api/status')
+@login_required
 def api_status():
     """获取服务器状态"""
     server_info = get_server_info()
@@ -382,6 +531,7 @@ def api_status():
 
 
 @app.route('/api/clients')
+@login_required
 def api_clients():
     """获取客户端列表"""
     clients = get_clients()
@@ -389,6 +539,7 @@ def api_clients():
 
 
 @app.route('/api/client/add', methods=['POST'])
+@login_required
 def api_add_client():
     """添加新客户端"""
     try:
@@ -532,6 +683,7 @@ PersistentKeepalive = 25
 
 
 @app.route('/api/client/<client_name>/config')
+@login_required
 def api_client_config(client_name):
     """获取客户端配置"""
     try:
@@ -557,6 +709,7 @@ def api_client_config(client_name):
 
 
 @app.route('/api/client/<client_name>/delete', methods=['POST'])
+@login_required
 def api_delete_client(client_name):
     """删除客户端"""
     try:
@@ -828,6 +981,7 @@ def api_delete_client(client_name):
 
 
 @app.route('/api/debug/config', methods=['GET'])
+@login_required
 def api_debug_config():
     """调试接口：查看配置文件结构"""
     try:
@@ -890,8 +1044,21 @@ def api_debug_config():
 
 
 if __name__ == '__main__':
-    # 确保客户端目录存在
+    # 确保必要目录存在
     os.makedirs(CLIENT_DIR, exist_ok=True)
 
+    # 初始化默认用户
+    init_default_user()
+
     # 启动 Flask 应用
+    print("\n" + "="*50)
+    print("🔒 WireGuard Web 管理面板")
+    print("="*50)
+    print(f"访问地址: http://0.0.0.0:8080")
+    print(f"默认用户名: {os.environ.get('ADMIN_USERNAME', 'admin')}")
+    if not os.environ.get('ADMIN_PASSWORD'):
+        print(f"默认密码: admin123")
+        print("⚠️  请在生产环境中修改默认密码！")
+    print("="*50 + "\n")
+
     app.run(host='0.0.0.0', port=8080, debug=False)

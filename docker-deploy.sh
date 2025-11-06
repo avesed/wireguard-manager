@@ -149,6 +149,21 @@ if [ "$SERVICES" = "web" ] || [ "$SERVICES" = "all" ]; then
     echo ""
     echo "启动 Web 管理界面..."
 
+    # 配置身份认证
+    ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+    ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+
+    # 如果未设置密码，生成随机密码
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+        GENERATED_PASSWORD=true
+    else
+        GENERATED_PASSWORD=false
+    fi
+
+    # 生成 SECRET_KEY
+    SECRET_KEY=${SECRET_KEY:-$(openssl rand -hex 32)}
+
     docker run -d \
         --name wireguard-web-ui \
         --restart unless-stopped \
@@ -157,6 +172,9 @@ if [ "$SERVICES" = "web" ] || [ "$SERVICES" = "all" ]; then
         --user root \
         -e WEB_PORT=8080 \
         -e TZ=Asia/Shanghai \
+        -e ADMIN_USERNAME="$ADMIN_USERNAME" \
+        -e ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+        -e SECRET_KEY="$SECRET_KEY" \
         -v "$(pwd)/config/wireguard:/etc/wireguard" \
         -v "$(pwd)/config/wireguard/clients:/etc/wireguard/clients" \
         wireguard-web:latest
@@ -200,6 +218,32 @@ fi
 if [ "$SERVICES" != "wireguard" ]; then
     echo "Web 管理界面:"
     echo "  地址: http://$SERVER_IP:8080"
+    echo ""
+    echo "🔒 登录凭据:"
+    echo "  用户名: $ADMIN_USERNAME"
+    if [ "$GENERATED_PASSWORD" = "true" ]; then
+        echo "  密码: $ADMIN_PASSWORD"
+        echo ""
+        echo "  ⚠️  这是自动生成的密码，请妥善保存！"
+        echo "  提示：建议首次登录后修改密码"
+
+        # 保存凭据到文件
+        cat > config/web-credentials.txt <<EOF
+WireGuard Web 管理面板登录凭据
+================================
+访问地址: http://$SERVER_IP:8080
+用户名: $ADMIN_USERNAME
+密码: $ADMIN_PASSWORD
+生成时间: $(date)
+================================
+⚠️ 请妥善保管此文件，并在首次登录后删除
+EOF
+        chmod 600 config/web-credentials.txt
+        echo ""
+        echo "  凭据已保存到: config/web-credentials.txt"
+    else
+        echo "  密码: (使用环境变量设置的密码)"
+    fi
     echo ""
 fi
 
