@@ -297,13 +297,14 @@ def get_server_info():
         return {'error': str(e)}
 
 
-def _parse_peer_data(peer_data, wg_output):
+def _parse_peer_data(peer_data, wg_output, traffic_data):
     """
     解析单个peer块的数据（包括前置注释）
 
     Args:
         peer_data: 包含注释和peer内容的完整文本块
         wg_output: wg show命令的输出，用于获取连接状态
+        traffic_data: 流量数据字典（会被修改）
 
     Returns:
         dict: 客户端信息字典，如果解析失败返回None
@@ -373,7 +374,7 @@ def _parse_peer_data(peer_data, wg_output):
             transfer_tx = tx_match.group(1)
 
     # 流量持久化和累计计算
-    traffic_data = load_traffic_data()
+    # 注意：traffic_data 作为参数传入，不再在这里加载
 
     # 解析当前流量为字节数
     current_rx_bytes = parse_transfer_size(transfer_rx)
@@ -411,9 +412,8 @@ def _parse_peer_data(peer_data, wg_output):
     client_traffic['last_tx'] = current_tx_bytes
     client_traffic['last_update'] = datetime.now().isoformat()
 
-    # 保存流量数据
+    # 更新 traffic_data（引用传递，会修改外部的字典）
     traffic_data[name] = client_traffic
-    save_traffic_data(traffic_data)
 
     # 格式化总流量（使用十进制单位）
     transfer_total = format_bytes(total_bytes)
@@ -455,6 +455,9 @@ def get_clients():
         wg_show = run_command(f'wg show {WG_INTERFACE}', use_sudo=False)
         wg_output = wg_show['stdout'] if wg_show['success'] else ''
 
+        # 加载流量数据（整个函数只加载一次）
+        traffic_data = load_traffic_data()
+
         clients = []
 
         # 使用状态机方法解析配置，正确捕获 [Peer] 之前的注释
@@ -478,7 +481,7 @@ def get_clients():
                 if in_peer and peer_content_lines:
                     # 处理上一个peer
                     peer_data = '\n'.join(peer_comment_lines + peer_content_lines)
-                    client = _parse_peer_data(peer_data, wg_output)
+                    client = _parse_peer_data(peer_data, wg_output, traffic_data)
                     if client:
                         clients.append(client)
                     # 重置注释列表，防止注释被关联到错误的peer
@@ -519,7 +522,7 @@ def get_clients():
                         if peer_content_lines:
                             # 处理当前peer
                             peer_data = '\n'.join(peer_comment_lines + peer_content_lines)
-                            client = _parse_peer_data(peer_data, wg_output)
+                            client = _parse_peer_data(peer_data, wg_output, traffic_data)
                             if client:
                                 clients.append(client)
 
@@ -549,7 +552,7 @@ def get_clients():
         # 处理最后一个peer块（如果存在）
         if in_peer and peer_content_lines:
             peer_data = '\n'.join(peer_comment_lines + peer_content_lines)
-            client = _parse_peer_data(peer_data, wg_output)
+            client = _parse_peer_data(peer_data, wg_output, traffic_data)
             if client:
                 clients.append(client)
 
@@ -570,6 +573,9 @@ def get_clients():
                 client['duplicate_warning'] = f'⚠️ 此公钥有{pubkey_count[pubkey]}个重复'
             else:
                 client['is_duplicate'] = False
+
+        # 保存流量数据（整个函数只保存一次）
+        save_traffic_data(traffic_data)
 
         return clients
     except Exception as e:
