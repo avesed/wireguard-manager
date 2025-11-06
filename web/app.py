@@ -366,8 +366,8 @@ def _parse_peer_data(peer_data, wg_output, traffic_data):
             status = 'online' if 'second' in last_handshake or 'minute' in last_handshake else 'offline'
 
         # 传输数据
-        rx_match = re.search(r'transfer:\s*([^\s]+)\s+received', peer_data_status)
-        tx_match = re.search(r'received,\s*([^\s]+)\s+sent', peer_data_status)
+        rx_match = re.search(r'transfer:\s*([\d.]+\s+\w+)\s+received', peer_data_status)
+        tx_match = re.search(r'received,\s*([\d.]+\s+\w+)\s+sent', peer_data_status)
         if rx_match:
             transfer_rx = rx_match.group(1)
         if tx_match:
