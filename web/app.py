@@ -249,7 +249,19 @@ def get_clients():
 
             # 在interface块中
             elif in_interface:
-                pass  # 忽略interface块的内容
+                # 检查是否是 Peer 的注释（用于识别客户端名称）
+                if stripped.startswith('#'):
+                    # 检查是否是客户端注释格式
+                    if (re.search(r'#\s*客户端[：:]', stripped) or
+                        re.search(r'#\s*[Cc]lient\s*:', stripped) or
+                        (re.search(r'^#\s*[a-zA-Z0-9_-]+\s*$', stripped) and
+                         not any(keyword in stripped for keyword in ['服务端', '监听', '启动', '关闭', 'Interface', 'Server']))):
+                        # 这是一个 Peer 的注释，结束 Interface 块
+                        in_interface = False
+                        peer_comment_lines.append(line)
+                    # 否则忽略（Interface 块内的注释）
+                else:
+                    pass  # 忽略 Interface 块的其他内容
 
             # 在peer块中
             elif in_peer:
