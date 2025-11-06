@@ -265,7 +265,31 @@ def get_clients():
 
             # 在peer块中
             elif in_peer:
-                peer_content_lines.append(line)
+                # 检查是否是下一个 Peer 的注释
+                if stripped.startswith('#'):
+                    # 检查是否是客户端注释格式
+                    if (re.search(r'#\s*客户端[：:]', stripped) or
+                        re.search(r'#\s*[Cc]lient\s*:', stripped) or
+                        (re.search(r'^#\s*[a-zA-Z0-9_-]+\s*$', stripped) and
+                         not any(keyword in stripped for keyword in ['服务端', '监听', '启动', '关闭', 'Interface', 'Server']))):
+                        # 这是下一个 Peer 的注释，结束当前 peer
+                        if peer_content_lines:
+                            # 处理当前peer
+                            peer_data = '\n'.join(peer_comment_lines + peer_content_lines)
+                            client = _parse_peer_data(peer_data, wg_output)
+                            if client:
+                                clients.append(client)
+
+                        # 开始收集新的注释
+                        in_peer = False
+                        peer_comment_lines = [line]
+                        peer_content_lines = []
+                    else:
+                        # peer 内部的注释，添加到内容中
+                        peer_content_lines.append(line)
+                else:
+                    # peer 的配置行
+                    peer_content_lines.append(line)
 
             # 不在任何section中（可能是peer的注释或空行）
             else:
@@ -614,7 +638,30 @@ def api_delete_client(client_name):
 
             # 在peer块中
             elif in_peer:
-                peer_content_lines.append(line)
+                # 检查是否是下一个 Peer 的注释
+                if stripped.startswith('#'):
+                    # 检查是否是客户端注释格式
+                    if (re.search(r'#\s*客户端[：:]', stripped) or
+                        re.search(r'#\s*[Cc]lient\s*:', stripped) or
+                        (re.search(r'^#\s*[a-zA-Z0-9_-]+\s*$', stripped) and
+                         not any(keyword in stripped for keyword in ['服务端', '监听', '启动', '关闭', 'Interface', 'Server']))):
+                        # 这是下一个 Peer 的注释，结束当前 peer
+                        if not skip_current_peer:
+                            # 保存当前peer的注释和内容
+                            new_lines.extend(peer_comment_lines)
+                            new_lines.extend(peer_content_lines)
+
+                        # 开始收集新的注释
+                        in_peer = False
+                        peer_comment_lines = [line]
+                        peer_content_lines = []
+                        skip_current_peer = False
+                    else:
+                        # peer 内部的注释，添加到内容中
+                        peer_content_lines.append(line)
+                else:
+                    # peer 的配置行
+                    peer_content_lines.append(line)
 
                 # 检测PublicKey行
                 if 'PublicKey' in line and '=' in line and not skip_current_peer:
