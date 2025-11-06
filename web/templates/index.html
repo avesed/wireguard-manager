@@ -283,6 +283,27 @@
             border-radius: 6px;
         }
 
+        .config-button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .config-btn-half {
+            flex: 1;
+            min-width: 0;
+        }
+
+        @media (max-width: 480px) {
+            .config-button-group {
+                flex-direction: column;
+            }
+
+            .config-btn-half {
+                width: 100%;
+            }
+        }
+
         .loading {
             text-align: center;
             padding: 40px;
@@ -572,7 +593,10 @@
                     let html = `
                         <h4 style="margin-bottom: 15px;">配置文件</h4>
                         <div class="config-box">${escapeHtml(data.config)}</div>
-                        <button class="btn btn-primary" onclick="copyConfig(this)" style="width: 100%; margin-bottom: 10px;">📋 复制配置</button>
+                        <div class="config-button-group">
+                            <button class="btn btn-primary config-btn-half" onclick="copyConfig(this)">📋 复制配置</button>
+                            <button class="btn btn-primary config-btn-half" onclick="downloadConfig('${escapeHtml(clientName)}', this)">💾 下载配置文件</button>
+                        </div>
                     `;
 
                     if (data.qrcode) {
@@ -598,16 +622,105 @@
             document.getElementById('configModal').classList.remove('active');
         }
 
-        // 复制配置
+        // 复制配置（带错误处理和fallback）
         function copyConfig(button) {
             const configText = document.querySelector('.config-box').textContent;
-            navigator.clipboard.writeText(configText).then(() => {
-                const originalText = button.textContent;
-                button.textContent = '✅ 已复制！';
+            const originalText = button.textContent;
+
+            // 尝试使用现代 Clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(configText)
+                    .then(() => {
+                        button.textContent = '✅ 已复制！';
+                        setTimeout(() => {
+                            button.textContent = originalText;
+                        }, 2000);
+                    })
+                    .catch(err => {
+                        console.error('Clipboard API 失败:', err);
+                        // 失败时尝试fallback方法
+                        fallbackCopyText(configText, button, originalText);
+                    });
+            } else {
+                // 不支持Clipboard API，使用fallback方法
+                fallbackCopyText(configText, button, originalText);
+            }
+        }
+
+        // Fallback 复制方法（适用于HTTP或不支持Clipboard API的浏览器）
+        function fallbackCopyText(text, button, originalText) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            textArea.style.top = '0';
+            document.body.appendChild(textArea);
+
+            try {
+                textArea.focus();
+                textArea.select();
+                const successful = document.execCommand('copy');
+
+                if (successful) {
+                    button.textContent = '✅ 已复制！';
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                    }, 2000);
+                } else {
+                    button.textContent = '❌ 复制失败';
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                    }, 2000);
+                    alert('复制失败，请手动选择并复制配置文本');
+                }
+            } catch (err) {
+                console.error('Fallback复制失败:', err);
+                button.textContent = '❌ 复制失败';
                 setTimeout(() => {
                     button.textContent = originalText;
                 }, 2000);
-            });
+                alert('复制失败，请手动选择并复制配置文本');
+            } finally {
+                document.body.removeChild(textArea);
+            }
+        }
+
+        // 下载配置文件
+        function downloadConfig(clientName, button) {
+            const configText = document.querySelector('.config-box').textContent;
+            const originalText = button.textContent;
+
+            try {
+                // 创建Blob对象
+                const blob = new Blob([configText], { type: 'text/plain;charset=utf-8' });
+
+                // 创建下载链接
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${clientName}.conf`;
+
+                // 触发下载
+                document.body.appendChild(link);
+                link.click();
+
+                // 清理
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+
+                // 用户反馈
+                button.textContent = '✅ 已下载！';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 2000);
+            } catch (err) {
+                console.error('下载失败:', err);
+                button.textContent = '❌ 下载失败';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 2000);
+                alert('下载失败: ' + err.message);
+            }
         }
 
         // 删除客户端
