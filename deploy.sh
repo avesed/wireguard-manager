@@ -295,11 +295,11 @@ start_web() {
         --network host \
         --cap-add NET_ADMIN \
         --user root \
-        -e WEB_PORT=$WEB_PORT \
-        -e TZ=Asia/Shanghai \
-        -e ADMIN_USERNAME="$admin_username" \
-        -e ADMIN_PASSWORD="$admin_password" \
-        -e SECRET_KEY="$secret_key" \
+        -e "WEB_PORT=$WEB_PORT" \
+        -e "TZ=Asia/Shanghai" \
+        -e "ADMIN_USERNAME=$admin_username" \
+        -e "ADMIN_PASSWORD=$admin_password" \
+        -e "SECRET_KEY=$secret_key" \
         -v "$config_dir/wireguard:/etc/wireguard" \
         -v "$config_dir/wireguard/clients:/etc/wireguard/clients" \
         wireguard-web:latest
@@ -435,11 +435,11 @@ change_admin_password() {
         --network host \
         --cap-add NET_ADMIN \
         --user root \
-        -e WEB_PORT=$WEB_PORT \
-        -e TZ=Asia/Shanghai \
-        -e ADMIN_USERNAME="$admin_username" \
-        -e ADMIN_PASSWORD="$new_password" \
-        -e SECRET_KEY="$secret_key" \
+        -e "WEB_PORT=$WEB_PORT" \
+        -e "TZ=Asia/Shanghai" \
+        -e "ADMIN_USERNAME=$admin_username" \
+        -e "ADMIN_PASSWORD=$new_password" \
+        -e "SECRET_KEY=$secret_key" \
         -v "$config_dir/wireguard:/etc/wireguard" \
         -v "$config_dir/wireguard/clients:/etc/wireguard/clients" \
         wireguard-web:latest >/dev/null
