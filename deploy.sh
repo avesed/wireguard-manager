@@ -149,7 +149,7 @@ check_existing_data() {
             read confirm_delete
 
             if [ "$confirm_delete" = "DELETE" ]; then
-                rm -rf "$config_dir/wireguard"
+                sudo rm -rf "$config_dir/wireguard"
                 log_info "现有数据已删除"
                 return 1
             else
@@ -555,7 +555,7 @@ restore_data() {
     fi
 
     # 删除现有数据
-    rm -rf "$config_dir/wireguard"
+    sudo rm -rf "$config_dir/wireguard"
 
     # 恢复数据
     tar -xzf "$backup_file" -C "$config_dir"
@@ -587,7 +587,7 @@ clear_all_data() {
     stop_containers "all"
 
     # 删除数据
-    rm -rf "$config_dir/wireguard"
+    sudo rm -rf "$config_dir/wireguard"
     log_info "所有数据已删除"
 }
 
@@ -887,7 +887,7 @@ uninstall() {
         read confirm_delete
 
         if [ "$confirm_delete" = "DELETE" ]; then
-            rm -rf "$config_dir"
+            sudo rm -rf "$config_dir"
             log_info "配置数据已删除"
         else
             log_info "保留配置数据"
