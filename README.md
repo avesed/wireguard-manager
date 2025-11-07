@@ -6,8 +6,7 @@
 
 ### 一键安装
 ```bash
-# 使用 curl 直接安装（自动安装 Docker、Git 等依赖）
-curl -fsSL https://raw.githubusercontent.com/avesed/wireguard-manager/main/install.sh | sudo bash
+bash <(curl -fsSL https://raw.githubusercontent.com/avesed/wireguard-manager/main/install.sh)
 ```
 部署完成后，登录凭据会显示在终端并保存到 `/etc/wireguard-manager/web-credentials.txt`
 
