@@ -683,6 +683,25 @@ full_install() {
     echo "安装目录: $config_dir"
     echo ""
 
+    # 配置参数
+    echo "=== 配置参数 ==="
+    echo ""
+    echo -n "WireGuard 端口 [51820]: "
+    read input_wg_port
+    WG_PORT="${input_wg_port:-51820}"
+
+    echo -n "Web 管理界面端口 [8080]: "
+    read input_web_port
+    WEB_PORT="${input_web_port:-8080}"
+
+    echo -n "VPN 网段 [10.8.0.1/24]: "
+    read input_vpn_ip
+    SERVER_VPN_IP="${input_vpn_ip:-10.8.0.1/24}"
+
+    echo ""
+    log_info "配置: WG端口=$WG_PORT, Web端口=$WEB_PORT, VPN网段=$SERVER_VPN_IP"
+    echo ""
+
     check_docker
     detect_server_ip
 
@@ -701,6 +720,16 @@ full_install() {
     # 启动服务
     start_wireguard "$config_dir"
     start_web "$config_dir" "${ADMIN_USERNAME:-admin}" "$ADMIN_PASSWORD"
+
+    # 读取凭据信息用于显示
+    local admin_username="${ADMIN_USERNAME:-admin}"
+    local admin_password="$ADMIN_PASSWORD"
+    if [ -z "$admin_password" ] && [ -f "$config_dir/web-credentials.txt" ]; then
+        admin_password=$(grep "^密码:" "$config_dir/web-credentials.txt" | cut -d' ' -f2)
+    fi
+    if [ -z "$admin_password" ]; then
+        admin_password="<请查看 $config_dir/web-credentials.txt>"
+    fi
 
     echo ""
     echo "=========================================="

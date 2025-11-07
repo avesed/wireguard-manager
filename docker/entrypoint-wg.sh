@@ -44,14 +44,6 @@ if [ ! -f "$WG_CONF" ]; then
     echo "$SERVER_PUBLIC_KEY" > /etc/wireguard/server_public.key
     chmod 600 /etc/wireguard/server_private.key
 
-    # 生成默认客户端配置
-    CLIENT_PRIVATE_KEY=$(wg genkey)
-    CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
-
-    echo "$CLIENT_PRIVATE_KEY" > /etc/wireguard/client_private.key
-    echo "$CLIENT_PUBLIC_KEY" > /etc/wireguard/client_public.key
-    chmod 600 /etc/wireguard/client_private.key
-
     # 创建服务端配置
     cat > "$WG_CONF" <<EOF
 [Interface]
@@ -75,11 +67,6 @@ PostDown = iptables -D FORWARD -i $WG_INTERFACE -j ACCEPT || true
 PostDown = iptables -D FORWARD -o $WG_INTERFACE -j ACCEPT || true
 PostDown = iptables -t nat -D POSTROUTING -o $DEFAULT_INTERFACE -j MASQUERADE || true
 PostDown = iptables -D INPUT -p udp --dport $WG_PORT -j ACCEPT || true
-
-# 客户端: default-client
-[Peer]
-PublicKey = $CLIENT_PUBLIC_KEY
-AllowedIPs = 10.8.0.2/32
 EOF
 
     chmod 600 "$WG_CONF"
@@ -96,7 +83,6 @@ EOF
     echo "✓ Initial configuration generated"
     echo ""
     echo "Server Public Key: $SERVER_PUBLIC_KEY"
-    echo "Client Public Key: $CLIENT_PUBLIC_KEY"
     echo ""
 fi
 
