@@ -185,25 +185,6 @@ sudo docker restart wireguard-vpn
 sudo bash deploy.sh install --install-dir /opt/wg-data
 ```
 
-### 自定义端口
-
-```bash
-# 设置环境变量
-export WEB_PORT=9090
-export WG_PORT=51821
-
-# 运行部署
-sudo -E bash deploy.sh install
-```
-
-### 自定义 VPN 网段
-
-```bash
-export SERVER_VPN_IP="10.10.0.1/24"
-sudo -E bash deploy.sh install
-```
-
-```
 
 ## 详细文档
 
