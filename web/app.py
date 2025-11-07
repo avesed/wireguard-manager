@@ -152,24 +152,11 @@ def save_users(users_data):
 def init_default_user():
     """初始化默认管理员用户"""
     users = load_users()
+    default_username = os.environ.get('ADMIN_USERNAME', 'admin')
+    default_password = os.environ.get('ADMIN_PASSWORD')
 
-    # 如果没有用户，创建默认管理员
-    if not users:
-        default_username = os.environ.get('ADMIN_USERNAME', 'admin')
-        default_password = os.environ.get('ADMIN_PASSWORD')
-
-        # 要求必须通过环境变量设置强密码
-        if not default_password:
-            print("❌ 错误: 必须通过环境变量 ADMIN_PASSWORD 设置管理员密码")
-            print("   密码要求:")
-            print("   - 最少8个字符")
-            print("   - 至少包含一个大写字母")
-            print("   - 至少包含一个小写字母")
-            print("   - 至少包含一个数字")
-            print("   - 至少包含一个特殊字符 (!@#$%^&* 等)")
-            print("\n   示例: export ADMIN_PASSWORD='MyP@ssw0rd!'")
-            raise ValueError("未设置 ADMIN_PASSWORD 环境变量")
-
+    # 如果设置了 ADMIN_PASSWORD 环境变量，同步更新或创建管理员账户
+    if default_password:
         # 验证密码强度
         is_valid, message = User.validate_password(default_password)
         if not is_valid:
@@ -182,17 +169,46 @@ def init_default_user():
             print("   - 至少包含一个特殊字符 (!@#$%^&* 等)")
             raise ValueError(f"密码不符合安全要求: {message}")
 
-        users[default_username] = {
-            'username': default_username,
-            'password_hash': User.hash_password(default_password)
-        }
+        # 生成新的密码哈希
+        new_password_hash = User.hash_password(default_password)
 
-        if save_users(users):
-            print(f"✅ 默认管理员账户已创建: {default_username}")
-            print(f"✅ 密码已设置并符合安全要求")
+        # 检查是否需要更新密码
+        needs_update = False
+        if default_username in users:
+            # 用户已存在，检查密码是否需要更新
+            if users[default_username].get('password_hash') != new_password_hash:
+                needs_update = True
+                print(f"🔄 检测到环境变量密码变化，更新管理员密码: {default_username}")
         else:
-            print("❌ 创建默认用户失败")
-            raise RuntimeError("无法保存用户数据")
+            # 用户不存在，需要创建
+            needs_update = True
+            print(f"✅ 创建管理员账户: {default_username}")
+
+        if needs_update:
+            users[default_username] = {
+                'username': default_username,
+                'password_hash': new_password_hash
+            }
+
+            if save_users(users):
+                print(f"✅ 管理员账户密码已设置并符合安全要求")
+            else:
+                print("❌ 保存用户数据失败")
+                raise RuntimeError("无法保存用户数据")
+        else:
+            print(f"✅ 管理员账户已存在，密码未变化: {default_username}")
+
+    # 如果没有设置密码环境变量且没有任何用户，报错
+    elif not users:
+        print("❌ 错误: 必须通过环境变量 ADMIN_PASSWORD 设置管理员密码")
+        print("   密码要求:")
+        print("   - 最少8个字符")
+        print("   - 至少包含一个大写字母")
+        print("   - 至少包含一个小写字母")
+        print("   - 至少包含一个数字")
+        print("   - 至少包含一个特殊字符 (!@#$%^&* 等)")
+        print("\n   示例: export ADMIN_PASSWORD='MyP@ssw0rd!'")
+        raise ValueError("未设置 ADMIN_PASSWORD 环境变量")
 
     return users
 

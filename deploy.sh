@@ -720,6 +720,65 @@ full_install() {
     echo "=========================================="
 }
 
+# 从 Git 拉取最新代码
+pull_latest_code() {
+    echo ""
+    echo "=== 检查代码更新 ==="
+    echo ""
+
+    # 检查是否是 git 仓库
+    if [ ! -d ".git" ]; then
+        log_warn "当前目录不是 Git 仓库，跳过代码更新"
+        return 0
+    fi
+
+    # 检查是否有未提交的更改
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        log_warn "检测到本地修改"
+        echo -n "是否暂存本地修改并拉取更新? (y/n) [y]: "
+        read stash_changes
+        stash_changes=${stash_changes:-y}
+
+        if [ "$stash_changes" = "y" ] || [ "$stash_changes" = "Y" ]; then
+            log_info "暂存本地修改..."
+            git stash
+            local stashed=true
+        else
+            log_warn "保留本地修改，跳过代码更新"
+            return 0
+        fi
+    fi
+
+    # 拉取最新代码
+    log_info "从 GitHub 拉取最新代码..."
+
+    # 获取当前分支
+    local current_branch=$(git branch --show-current)
+    log_info "当前分支: $current_branch"
+
+    # 拉取代码
+    if git pull origin "$current_branch"; then
+        log_info "代码更新成功"
+
+        # 如果之前暂存了更改，提示恢复
+        if [ "$stashed" = true ]; then
+            echo ""
+            log_info "本地修改已暂存"
+            echo "更新完成后可使用以下命令恢复:"
+            echo "  git stash pop"
+        fi
+    else
+        log_error "代码更新失败"
+
+        # 如果之前暂存了更改，恢复
+        if [ "$stashed" = true ]; then
+            log_info "恢复本地修改..."
+            git stash pop
+        fi
+        return 1
+    fi
+}
+
 # 升级/重新安装
 upgrade_install() {
     local config_dir="$1"
@@ -727,6 +786,9 @@ upgrade_install() {
     echo ""
     echo "=== 升级/重新安装 ==="
     echo ""
+
+    # 拉取最新代码
+    pull_latest_code
 
     log_info "停止现有容器..."
     stop_containers "all"
@@ -882,19 +944,20 @@ interactive_menu() {
         echo "=========================================="
         echo ""
         echo "1) 完整安装 (WireGuard + Web)"
-        echo "2) 升级/重新安装"
-        echo "3) 重启服务"
-        echo "4) 停止服务"
-        echo "5) 卸载"
-        echo "6) 数据管理"
-        echo "7) 查看日志"
-        echo "8) 查看状态"
-        echo "9) 更改管理员密码"
+        echo "2) 升级/重新安装 (包含代码更新)"
+        echo "3) 更新代码 (仅拉取最新代码)"
+        echo "4) 重启服务"
+        echo "5) 停止服务"
+        echo "6) 卸载"
+        echo "7) 数据管理"
+        echo "8) 查看日志"
+        echo "9) 查看状态"
+        echo "10) 更改管理员密码"
         echo "0) 退出"
         echo ""
         echo "安装目录: $config_dir"
         echo ""
-        echo -n "请选择 [0-9]: "
+        echo -n "请选择 [0-10]: "
         read choice
 
         case $choice in
@@ -905,26 +968,29 @@ interactive_menu() {
                 upgrade_install "$config_dir"
                 ;;
             3)
-                restart_services "$config_dir"
+                pull_latest_code
                 ;;
             4)
+                restart_services "$config_dir"
+                ;;
+            5)
                 stop_containers "all"
                 log_info "所有服务已停止"
                 ;;
-            5)
+            6)
                 uninstall "$config_dir"
                 ;;
-            6)
+            7)
                 data_management "$config_dir"
                 ;;
-            7)
+            8)
                 view_logs
                 ;;
-            8)
+            9)
                 detect_server_ip
                 show_status
                 ;;
-            9)
+            10)
                 detect_server_ip
                 change_admin_password "$config_dir"
                 ;;
@@ -1006,6 +1072,10 @@ main() {
                 backup_data "$INSTALL_DIR"
                 exit 0
                 ;;
+            update|pull)
+                pull_latest_code
+                exit 0
+                ;;
             -h|--help)
                 echo "WireGuard Manager 部署脚本"
                 echo ""
@@ -1014,7 +1084,8 @@ main() {
                 echo ""
                 echo "命令:"
                 echo "  install              完整安装"
-                echo "  upgrade              升级/重新安装"
+                echo "  upgrade              升级/重新安装（包含代码更新）"
+                echo "  update               仅更新代码（不重启服务）"
                 echo "  restart              重启服务"
                 echo "  stop                 停止服务"
                 echo "  uninstall            卸载"
@@ -1032,6 +1103,8 @@ main() {
                 echo "  $0                                    # 交互式菜单"
                 echo "  $0 install                            # 完整安装"
                 echo "  $0 install --install-dir /opt/wg     # 自定义安装目录"
+                echo "  $0 update                             # 更新代码"
+                echo "  $0 upgrade                            # 升级（更新代码+重启）"
                 echo "  $0 --mode wireguard --quick          # 快速部署 WireGuard"
                 echo "  $0 status                            # 查看状态"
                 exit 0
