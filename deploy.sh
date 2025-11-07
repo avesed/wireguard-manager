@@ -76,7 +76,7 @@ validate_password() {
         return 1
     fi
 
-    if ! echo "$password" | grep -q '[!@#$%^&*()_+\-=\[\]{};:'"'"',.<>?/\\|`~]'; then
+    if ! echo "$password" | grep -q '[$!@#%^&*()_+=\[\]{};:'"'"',.<>?/\\|`~-]'; then
         echo "密码必须包含至少一个特殊字符 (!@#$%^&* 等)"
         return 1
     fi
@@ -310,7 +310,7 @@ start_web() {
         -e "WEB_PORT=$WEB_PORT" \
         -e "TZ=Asia/Shanghai" \
         -e "ADMIN_USERNAME=$admin_username" \
-        -e "ADMIN_PASSWORD=$admin_password" \
+        -e 'ADMIN_PASSWORD='"$admin_password" \
         -e "SECRET_KEY=$secret_key" \
         -v "$config_dir/wireguard:/etc/wireguard" \
         -v "$config_dir/wireguard/clients:/etc/wireguard/clients" \
@@ -464,7 +464,7 @@ change_admin_password() {
         -e "WEB_PORT=$WEB_PORT" \
         -e "TZ=Asia/Shanghai" \
         -e "ADMIN_USERNAME=$admin_username" \
-        -e "ADMIN_PASSWORD=$new_password" \
+        -e 'ADMIN_PASSWORD='"$new_password" \
         -e "SECRET_KEY=$secret_key" \
         -v "$config_dir/wireguard:/etc/wireguard" \
         -v "$config_dir/wireguard/clients:/etc/wireguard/clients" \
