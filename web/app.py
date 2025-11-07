@@ -5,7 +5,7 @@ WireGuard Web 管理界面 - Flask 后端
 
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, CSRFError
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import subprocess
@@ -29,6 +29,18 @@ app.config['WTF_CSRF_SSL_STRICT'] = False  # 允许非HTTPS环境（生产环境
 
 # CSRF 保护
 csrf = CSRFProtect(app)
+
+# 会话Cookie配置
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False  # 设为True如果使用HTTPS
+
+# CSRF错误处理
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    """处理CSRF错误，返回用户友好的错误消息"""
+    flash('会话已过期，请重新登录', 'error')
+    return redirect(url_for('login')), 400
 
 # 速率限制
 limiter = Limiter(
@@ -709,6 +721,11 @@ def login():
     # 如果已登录，重定向到主页
     if current_user.is_authenticated:
         return redirect(url_for('index'))
+
+    # 确保会话在GET请求时已初始化（用于CSRF token）
+    if request.method == 'GET':
+        if not session.get('_csrf_token'):
+            session.modified = True
 
     if request.method == 'POST':
         username = request.form.get('username', '').strip()

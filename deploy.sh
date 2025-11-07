@@ -286,8 +286,19 @@ start_web() {
         generated_password=true
     fi
 
-    # 生成 SECRET_KEY
-    local secret_key=${SECRET_KEY:-$(openssl rand -hex 32)}
+    # 生成或读取持久化的 SECRET_KEY
+    local secret_key_file="$config_dir/.secret_key"
+    local secret_key=""
+
+    if [ -f "$secret_key_file" ]; then
+        secret_key=$(cat "$secret_key_file")
+        log_info "使用已有的 SECRET_KEY"
+    else
+        secret_key=${SECRET_KEY:-$(openssl rand -hex 32)}
+        echo "$secret_key" > "$secret_key_file"
+        chmod 600 "$secret_key_file"
+        log_info "生成新的 SECRET_KEY 并保存"
+    fi
 
     docker run -d \
         --name wireguard-web-ui \
@@ -419,10 +430,24 @@ change_admin_password() {
 
     # 获取当前的其他环境变量
     local admin_username=$(docker inspect wireguard-web-ui --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^ADMIN_USERNAME=' | cut -d= -f2)
-    local secret_key=$(docker inspect wireguard-web-ui --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^SECRET_KEY=' | cut -d= -f2)
+
+    # 读取持久化的 SECRET_KEY
+    local secret_key_file="$config_dir/.secret_key"
+    local secret_key=""
+
+    if [ -f "$secret_key_file" ]; then
+        secret_key=$(cat "$secret_key_file")
+    else
+        # 尝试从现有容器获取，否则生成新的
+        secret_key=$(docker inspect wireguard-web-ui --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^SECRET_KEY=' | cut -d= -f2)
+        if [ -z "$secret_key" ]; then
+            secret_key=$(openssl rand -hex 32)
+        fi
+        echo "$secret_key" > "$secret_key_file"
+        chmod 600 "$secret_key_file"
+    fi
 
     admin_username=${admin_username:-admin}
-    secret_key=${secret_key:-$(openssl rand -hex 32)}
 
     # 停止并删除旧容器
     docker stop wireguard-web-ui >/dev/null 2>&1
