@@ -46,7 +46,7 @@ def handle_csrf_error(e):
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
+    default_limits=["10000 per day", "1000 per hour"],
     storage_uri="memory://"
 )
 
@@ -789,6 +789,7 @@ def index():
 
 @app.route('/api/status')
 @login_required
+@limiter.limit("1200 per hour")  # 状态API需要更高限额：支持30秒自动刷新
 def api_status():
     """获取服务器状态"""
     server_info = get_server_info()

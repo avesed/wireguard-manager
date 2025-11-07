@@ -429,19 +429,68 @@
     <script>
         // 全局变量
         let refreshInterval;
+        let currentRefreshDelay = 30000; // 当前刷新间隔（毫秒）
+        let consecutiveErrors = 0; // 连续错误次数
+        let isRateLimited = false; // 是否被限速
+        let rateLimitRetryTime = null; // 限速恢复时间
 
         // 页面加载完成后初始化
         document.addEventListener('DOMContentLoaded', function() {
             refreshData();
             // 每30秒自动刷新
-            refreshInterval = setInterval(refreshData, 30000);
+            refreshInterval = setInterval(refreshData, currentRefreshDelay);
         });
+
+        // 重置刷新间隔
+        function resetRefreshInterval(newDelay) {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+            currentRefreshDelay = newDelay;
+            refreshInterval = setInterval(refreshData, currentRefreshDelay);
+        }
 
         // 刷新数据
         async function refreshData() {
             try {
                 const response = await fetch('/api/status');
+
+                // 检查 HTTP 429 速率限制错误
+                if (response.status === 429) {
+                    consecutiveErrors++;
+                    isRateLimited = true;
+
+                    // 计算下次重试时间（指数退避）
+                    const retryDelay = Math.min(30000 * Math.pow(2, consecutiveErrors - 1), 120000);
+                    rateLimitRetryTime = Date.now() + retryDelay;
+
+                    console.warn(`速率限制触发，${retryDelay/1000}秒后重试`);
+
+                    // 调整刷新间隔
+                    if (currentRefreshDelay < retryDelay) {
+                        resetRefreshInterval(retryDelay);
+                    }
+
+                    // 显示友好的错误提示
+                    showRateLimitError(retryDelay);
+                    return;
+                }
+
+                // 检查其他 HTTP 错误
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
                 const data = await response.json();
+
+                // 请求成功，重置错误计数和速率限制状态
+                consecutiveErrors = 0;
+                isRateLimited = false;
+
+                // 如果之前因为错误提高了刷新间隔，现在恢复正常
+                if (currentRefreshDelay !== 30000) {
+                    resetRefreshInterval(30000);
+                }
 
                 // 更新服务器状态
                 updateServerStatus(data.server);
@@ -452,11 +501,112 @@
 
                 // 更新客户端表格
                 updateClientsTable(data.clients || []);
+
+                // 清除任何错误提示
+                clearErrorMessages();
             } catch (error) {
+                consecutiveErrors++;
                 console.error('刷新数据失败:', error);
-                document.getElementById('clientsTableContainer').innerHTML =
-                    '<div class="empty-state">⚠️ 加载失败，请检查服务器连接</div>';
+
+                // 显示错误信息，但保持之前的数据可见
+                showNetworkError(error);
+
+                // 如果连续失败多次，增加重试间隔
+                if (consecutiveErrors >= 3 && currentRefreshDelay < 60000) {
+                    resetRefreshInterval(60000);
+                }
             }
+        }
+
+        // 显示速率限制错误
+        function showRateLimitError(retryDelay) {
+            const container = document.getElementById('clientsTableContainer');
+            const retrySeconds = Math.ceil(retryDelay / 1000);
+
+            // 如果已有表格数据，保留它，只显示警告横幅
+            const existingTable = container.querySelector('.clients-table');
+            if (existingTable) {
+                // 移除旧的错误横幅
+                const oldBanner = container.querySelector('.error-banner');
+                if (oldBanner) oldBanner.remove();
+
+                // 在表格前添加错误横幅
+                const banner = document.createElement('div');
+                banner.className = 'error-banner rate-limit-banner';
+                banner.innerHTML = `
+                    <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 12px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong style="color: #92400e;">⚠️ 速率限制</strong>
+                            <p style="color: #78350f; margin: 5px 0 0 0; font-size: 13px;">请求过于频繁，${retrySeconds}秒后自动重试</p>
+                        </div>
+                        <button class="btn btn-secondary" onclick="forceRetry()" style="padding: 6px 12px; font-size: 12px;">立即重试</button>
+                    </div>
+                `;
+                container.insertBefore(banner, container.firstChild);
+            } else {
+                // 没有数据，显示完整错误页面
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div style="font-size: 48px;">⏱️</div>
+                        <p style="color: #f59e0b;"><strong>速率限制</strong></p>
+                        <p style="font-size: 14px; margin: 10px 0;">请求过于频繁，${retrySeconds}秒后自动重试</p>
+                        <button class="btn btn-primary" onclick="forceRetry()" style="margin-top: 10px;">立即重试</button>
+                    </div>
+                `;
+            }
+        }
+
+        // 显示网络错误
+        function showNetworkError(error) {
+            const container = document.getElementById('clientsTableContainer');
+            const existingTable = container.querySelector('.clients-table');
+
+            if (existingTable) {
+                // 移除旧的错误横幅
+                const oldBanner = container.querySelector('.error-banner');
+                if (oldBanner) oldBanner.remove();
+
+                // 在表格前添加错误横幅
+                const banner = document.createElement('div');
+                banner.className = 'error-banner network-error-banner';
+                banner.innerHTML = `
+                    <div style="background: #fee2e2; border: 1px solid #ef4444; border-radius: 6px; padding: 12px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong style="color: #991b1b;">⚠️ 连接失败</strong>
+                            <p style="color: #7f1d1d; margin: 5px 0 0 0; font-size: 13px;">无法连接到服务器，将自动重试</p>
+                        </div>
+                        <button class="btn btn-secondary" onclick="forceRetry()" style="padding: 6px 12px; font-size: 12px;">立即重试</button>
+                    </div>
+                `;
+                container.insertBefore(banner, container.firstChild);
+            } else {
+                // 没有数据时才显示完整错误页面
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div style="font-size: 48px;">⚠️</div>
+                        <p style="color: #ef4444;"><strong>连接失败</strong></p>
+                        <p style="font-size: 14px; margin: 10px 0;">无法连接到服务器，请检查网络连接</p>
+                        <button class="btn btn-primary" onclick="forceRetry()" style="margin-top: 10px;">立即重试</button>
+                    </div>
+                `;
+            }
+        }
+
+        // 清除错误消息
+        function clearErrorMessages() {
+            const banner = document.querySelector('.error-banner');
+            if (banner) {
+                banner.remove();
+            }
+        }
+
+        // 强制重试
+        function forceRetry() {
+            consecutiveErrors = 0;
+            isRateLimited = false;
+            resetRefreshInterval(30000);
+            clearErrorMessages();
+            refreshData();
         }
 
         // 更新服务器状态
@@ -554,7 +704,13 @@
             if (!clientName) return;
 
             try {
-                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+                // 安全获取 CSRF token
+                const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                if (!csrfMeta) {
+                    throw new Error('会话已过期，请刷新页面重试');
+                }
+                const csrfToken = csrfMeta.getAttribute('content');
+
                 const response = await fetch('/api/client/add', {
                     method: 'POST',
                     headers: {
@@ -563,6 +719,12 @@
                     },
                     body: JSON.stringify({ name: clientName })
                 });
+
+                // 检查 HTTP 状态
+                if (response.status === 429) {
+                    alert('❌ 请求过于频繁，请稍后再试');
+                    return;
+                }
 
                 const data = await response.json();
 
@@ -627,8 +789,19 @@
 
         // 复制配置（带错误处理和fallback）
         function copyConfig(button) {
-            const configText = document.querySelector('.config-box').textContent;
             const originalText = button.textContent;
+
+            // 安全获取配置文本
+            const configBox = document.querySelector('.config-box');
+            if (!configBox) {
+                button.textContent = '❌ 错误';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 2000);
+                alert('无法找到配置内容，请重新打开配置窗口');
+                return;
+            }
+            const configText = configBox.textContent;
 
             // 尝试使用现代 Clipboard API
             if (navigator.clipboard && window.isSecureContext) {
@@ -690,8 +863,19 @@
 
         // 下载配置文件
         function downloadConfig(clientName, button) {
-            const configText = document.querySelector('.config-box').textContent;
             const originalText = button.textContent;
+
+            // 安全获取配置文本
+            const configBox = document.querySelector('.config-box');
+            if (!configBox) {
+                button.textContent = '❌ 错误';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                }, 2000);
+                alert('无法找到配置内容，请重新打开配置窗口');
+                return;
+            }
+            const configText = configBox.textContent;
 
             try {
                 // 创建Blob对象
@@ -733,13 +917,25 @@
             }
 
             try {
-                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+                // 安全获取 CSRF token
+                const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                if (!csrfMeta) {
+                    throw new Error('会话已过期，请刷新页面重试');
+                }
+                const csrfToken = csrfMeta.getAttribute('content');
+
                 const response = await fetch(`/api/client/${encodeURIComponent(clientName)}/delete`, {
                     method: 'POST',
                     headers: {
                         'X-CSRFToken': csrfToken
                     }
                 });
+
+                // 检查 HTTP 状态
+                if (response.status === 429) {
+                    alert('❌ 请求过于频繁，请稍后再试');
+                    return;
+                }
 
                 const data = await response.json();
 
