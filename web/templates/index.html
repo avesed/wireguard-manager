@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>WireGuard 管理面板</title>
     <style>
         * {
@@ -553,10 +554,12 @@
             if (!clientName) return;
 
             try {
+                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
                 const response = await fetch('/api/client/add', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
                     },
                     body: JSON.stringify({ name: clientName })
                 });
@@ -730,8 +733,12 @@
             }
 
             try {
+                const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
                 const response = await fetch(`/api/client/${encodeURIComponent(clientName)}/delete`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    }
                 });
 
                 const data = await response.json();

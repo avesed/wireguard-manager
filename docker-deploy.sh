@@ -153,9 +153,32 @@ if [ "$SERVICES" = "web" ] || [ "$SERVICES" = "all" ]; then
     ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
     ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 
-    # 如果未设置密码，生成随机密码
+    # 如果未设置密码，生成安全的随机密码
     if [ -z "$ADMIN_PASSWORD" ]; then
-        ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+        # 生成符合安全要求的密码：包含大写、小写、数字、特殊字符
+        generate_secure_password() {
+            local upper="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            local lower="abcdefghijklmnopqrstuvwxyz"
+            local digits="0123456789"
+            local special='!@#$%^&*()_+-='
+
+            # 确保每种类型至少有2个字符
+            local pass=""
+            pass+=$(echo "$upper" | fold -w1 | shuf | head -c2)
+            pass+=$(echo "$lower" | fold -w1 | shuf | head -c2)
+            pass+=$(echo "$digits" | fold -w1 | shuf | head -c2)
+            pass+=$(echo "$special" | fold -w1 | shuf | head -c2)
+
+            # 填充剩余8个字符（总共16位）
+            local all="${upper}${lower}${digits}${special}"
+            pass+=$(echo "$all" | fold -w1 | shuf | head -c8)
+
+            # 打乱顺序
+            echo "$pass" | fold -w1 | shuf | tr -d '\n'
+            echo ""
+        }
+
+        ADMIN_PASSWORD=$(generate_secure_password)
         GENERATED_PASSWORD=true
     else
         GENERATED_PASSWORD=false

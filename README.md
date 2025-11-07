@@ -1,21 +1,15 @@
 # WireGuard Manager
 
-基于 Docker 的 WireGuard VPN 管理工具，支持一键部署和Web管理界面。
+基于 Docker 的 WireGuard VPN 管理工具，支持真正一键部署和完整的Web管理界面。
 
 ## 快速开始
 
-### 一键部署
-
+### 一键安装
 ```bash
-# 克隆项目
-git clone https://github.com/avesed/wireguard-manager.git
-cd wireguard-manager
-
-# 一键部署（自动生成密码）
-sudo bash docker-deploy.sh
+# 使用 curl 直接安装（自动安装 Docker、Git 等依赖）
+curl -fsSL https://raw.githubusercontent.com/avesed/wireguard-manager/main/install.sh | sudo bash
 ```
-
-部署完成后，登录凭据会显示在终端并保存到 `config/web-credentials.txt`
+部署完成后，登录凭据会显示在终端并保存到 `/etc/wireguard-manager/web-credentials.txt`
 
 ## 访问Web界面
 
@@ -23,11 +17,63 @@ sudo bash docker-deploy.sh
 
 **默认凭据**：
 - 用户名：`admin`
-- 密码：部署时生成（查看终端或 `config/web-credentials.txt`）
+- 密码：部署时自动生成（查看终端或 `/etc/wireguard-manager/web-credentials.txt`）
+
+**密码要求**（安全要求）：
+- 最少 8 个字符
+- 包含大写字母
+- 包含小写字母
+- 包含数字
+- 包含特殊字符 (!@#$%^&* 等)
 
 ## 管理命令
 
-### 查看状态
+### 交互式菜单
+
+运行 deploy.sh 进入交互式管理菜单：
+
+```bash
+cd wireguard-manager  # 或您的安装目录
+sudo bash deploy.sh
+```
+
+**菜单选项**：
+1. **完整安装** - 安装 WireGuard + Web 界面
+2. **升级/重新安装** - 重新构建镜像并重启
+3. **重启服务** - 重启 Web/WireGuard/全部
+4. **停止服务** - 停止所有容器
+5. **卸载** - 删除容器，可选删除数据
+6. **数据管理** - 备份/恢复/清除配置数据
+7. **查看日志** - 查看容器运行日志
+8. **查看状态** - 显示容器和 WireGuard 状态
+9. **更改管理员密码** - 安全地更改密码（含验证）
+
+### 命令行快捷方式
+
+```bash
+# 查看状态
+sudo bash deploy.sh status
+
+# 查看日志
+sudo bash deploy.sh logs
+
+# 重启服务
+sudo bash deploy.sh restart
+
+# 更改密码
+sudo bash deploy.sh password
+
+# 停止服务
+sudo bash deploy.sh stop
+
+# 卸载
+sudo bash deploy.sh uninstall
+
+# 备份数据
+sudo bash deploy.sh backup
+```
+
+### Docker 直接管理
 
 ```bash
 # 查看容器
@@ -35,50 +81,34 @@ docker ps
 
 # 查看日志
 docker logs -f wireguard-vpn       # WireGuard
-docker logs -f wireguard-web-ui     # Web界面
-```
+docker logs -f wireguard-web-ui    # Web界面
 
-### 重启服务
-
-```bash
-# 重启Web界面
-sudo docker restart wireguard-web-ui
-
-# 重启WireGuard
-sudo docker restart wireguard-vpn
-```
-
-### 修改密码
-
-```bash
-# 停止容器
-sudo docker stop wireguard-web-ui
-
-# 删除用户数据
-sudo rm config/wireguard/users.json
-
-# 设置新密码并重启
-export ADMIN_PASSWORD="new_strong_password"
-sudo -E bash start-web.sh
-```
-
-### 清理环境
-
-```bash
-sudo bash cleanup-wireguard.sh
+# 重启服务
+docker restart wireguard-vpn
+docker restart wireguard-web-ui
 ```
 
 ## 安全建议
 
-### 1. 使用强密码
+### 1. 密码安全
 
-- 至少12位字符
-- 包含大小写字母、数字和特殊字符
-- 不使用常见密码
+系统自动生成符合以下要求的强密码：
+- 至少 8 个字符
+- 必须包含大写字母
+- 必须包含小写字母
+- 必须包含数字
+- 必须包含特殊字符 (!@#$%^&* 等)
 
-生成强密码：
+**首次登录后建议立即更改密码**：
 ```bash
-openssl rand -base64 16
+sudo bash deploy.sh password
+```
+
+自定义密码部署：
+```bash
+# 设置环境变量
+export ADMIN_PASSWORD="YourStr0ng!Pass"
+sudo -E bash deploy.sh install
 ```
 
 ### 2. 配置防火墙
@@ -96,10 +126,23 @@ sudo ufw enable
 
 ## 配置文件
 
-- **WireGuard配置**：`config/wireguard/wg0.conf`
-- **客户端配置**：`config/wireguard/clients/`
-- **用户数据**：`config/wireguard/users.json`
-- **登录凭据**：`config/web-credentials.txt`
+默认配置目录：`/etc/wireguard-manager`（可在安装时自定义）
+
+- **WireGuard配置**：`/etc/wireguard-manager/wireguard/wg0.conf`
+- **客户端配置**：`/etc/wireguard-manager/wireguard/clients/`
+- **用户数据**：`/etc/wireguard-manager/wireguard/users.json`
+- **登录凭据**：`/etc/wireguard-manager/web-credentials.txt`
+
+### 数据备份与恢复
+
+```bash
+# 备份数据
+sudo bash deploy.sh backup
+
+# 恢复数据
+sudo bash deploy.sh
+# 选择菜单选项 6 -> 2
+```
 
 ## 身份认证
 
@@ -142,15 +185,21 @@ sudo docker restart wireguard-web-ui
 
 ### 忘记密码
 
+使用统一脚本更改密码：
+```bash
+sudo bash deploy.sh password
+```
+
+或手动重置：
 ```bash
 # 删除用户数据
-sudo rm config/wireguard/users.json
+sudo rm /etc/wireguard-manager/wireguard/users.json
 
-# 重启容器
-sudo docker restart wireguard-web-ui
+# 重启容器（会生成新密码）
+docker restart wireguard-web-ui
 
 # 查看新密码
-sudo docker logs wireguard-web-ui | grep -A 5 "credentials"
+docker logs wireguard-web-ui | grep -A 5 "credentials"
 ```
 
 ### WireGuard连接失败
@@ -165,7 +214,36 @@ docker logs wireguard-vpn
 # 重启WireGuard
 sudo docker restart wireguard-vpn
 ```
+## 高级配置
+
+### 自定义安装目录
+
+```bash
+sudo bash deploy.sh install --install-dir /opt/wg-data
+```
+
+### 自定义端口
+
+```bash
+# 设置环境变量
+export WEB_PORT=9090
+export WG_PORT=51821
+
+# 运行部署
+sudo -E bash deploy.sh install
+```
+
+### 自定义 VPN 网段
+
+```bash
+export SERVER_VPN_IP="10.10.0.1/24"
+sudo -E bash deploy.sh install
+```
+
+```
 
 ## 详细文档
 
 - **[环境变量配置](.env.example)** - 配置示例文件
+- **[部署脚本](deploy.sh)** - 统一部署和管理脚本
+- **[安装脚本](install.sh)** - 一键安装脚本

@@ -5,6 +5,9 @@ WireGuard Web 管理界面 - Flask 后端
 
 from flask import Flask, render_template, jsonify, request, send_file, redirect, url_for, flash, session
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_wtf.csrf import CSRFProtect
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import subprocess
 import os
 import re
@@ -21,6 +24,19 @@ app = Flask(__name__)
 # 安全配置
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(24).hex())
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 会话1小时后过期
+app.config['WTF_CSRF_TIME_LIMIT'] = None  # CSRF令牌不过期（由会话控制）
+app.config['WTF_CSRF_SSL_STRICT'] = False  # 允许非HTTPS环境（生产环境应使用HTTPS）
+
+# CSRF 保护
+csrf = CSRFProtect(app)
+
+# 速率限制
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://"
+)
 
 # Flask-Login 配置
 login_manager = LoginManager()
@@ -58,15 +74,43 @@ class User(UserMixin):
         """生成密码哈希"""
         return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
+    @staticmethod
+    def validate_password(password):
+        """
+        验证密码强度
+        要求：
+        - 最少8个字符
+        - 至少包含一个大写字母
+        - 至少包含一个小写字母
+        - 至少包含一个数字
+        - 至少包含一个特殊字符
+        """
+        if len(password) < 8:
+            return False, "密码长度至少为8个字符"
+
+        if not re.search(r'[A-Z]', password):
+            return False, "密码必须包含至少一个大写字母"
+
+        if not re.search(r'[a-z]', password):
+            return False, "密码必须包含至少一个小写字母"
+
+        if not re.search(r'\d', password):
+            return False, "密码必须包含至少一个数字"
+
+        if not re.search(r'[!@#$%^&*()_+\-=\[\]{};:\'",.<>?/\\|`~]', password):
+            return False, "密码必须包含至少一个特殊字符 (!@#$%^&* 等)"
+
+        return True, "密码符合要求"
+
 
 # 用户数据管理
 def load_users():
     """加载用户数据"""
     try:
         if os.path.exists(USERS_FILE):
-            result = run_command(f'cat {USERS_FILE}', use_sudo=False)
+            result = run_command(['cat', USERS_FILE], use_sudo=False)
             if not result['success']:
-                result = run_command(f'cat {USERS_FILE}')
+                result = run_command(['cat', USERS_FILE])
             if result['success']:
                 return json.loads(result['stdout'])
         return {}
@@ -82,9 +126,9 @@ def save_users(users_data):
             json.dump(users_data, f, indent=2)
             temp_file = f.name
 
-        run_command(f'mkdir -p {WG_DIR}')
-        result = run_command(f'cp {temp_file} {USERS_FILE}')
-        run_command(f'chmod 600 {USERS_FILE}')
+        run_command(['mkdir', '-p', WG_DIR])
+        result = run_command(['cp', temp_file, USERS_FILE])
+        run_command(['chmod', '600', USERS_FILE])
         os.unlink(temp_file)
 
         return result['success']
@@ -100,7 +144,31 @@ def init_default_user():
     # 如果没有用户，创建默认管理员
     if not users:
         default_username = os.environ.get('ADMIN_USERNAME', 'admin')
-        default_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
+        default_password = os.environ.get('ADMIN_PASSWORD')
+
+        # 要求必须通过环境变量设置强密码
+        if not default_password:
+            print("❌ 错误: 必须通过环境变量 ADMIN_PASSWORD 设置管理员密码")
+            print("   密码要求:")
+            print("   - 最少8个字符")
+            print("   - 至少包含一个大写字母")
+            print("   - 至少包含一个小写字母")
+            print("   - 至少包含一个数字")
+            print("   - 至少包含一个特殊字符 (!@#$%^&* 等)")
+            print("\n   示例: export ADMIN_PASSWORD='MyP@ssw0rd!'")
+            raise ValueError("未设置 ADMIN_PASSWORD 环境变量")
+
+        # 验证密码强度
+        is_valid, message = User.validate_password(default_password)
+        if not is_valid:
+            print(f"❌ 错误: 密码不符合安全要求 - {message}")
+            print("   密码要求:")
+            print("   - 最少8个字符")
+            print("   - 至少包含一个大写字母")
+            print("   - 至少包含一个小写字母")
+            print("   - 至少包含一个数字")
+            print("   - 至少包含一个特殊字符 (!@#$%^&* 等)")
+            raise ValueError(f"密码不符合安全要求: {message}")
 
         users[default_username] = {
             'username': default_username,
@@ -109,11 +177,10 @@ def init_default_user():
 
         if save_users(users):
             print(f"✅ 默认管理员账户已创建: {default_username}")
-            if not os.environ.get('ADMIN_PASSWORD'):
-                print(f"⚠️  警告: 使用默认密码 'admin123'，请尽快修改！")
-                print(f"   可通过环境变量 ADMIN_USERNAME 和 ADMIN_PASSWORD 自定义")
+            print(f"✅ 密码已设置并符合安全要求")
         else:
             print("❌ 创建默认用户失败")
+            raise RuntimeError("无法保存用户数据")
 
     return users
 
@@ -123,9 +190,9 @@ def load_traffic_data():
     """加载流量数据"""
     try:
         if os.path.exists(TRAFFIC_FILE):
-            result = run_command(f'cat {TRAFFIC_FILE}', use_sudo=False)
+            result = run_command(['cat', TRAFFIC_FILE], use_sudo=False)
             if not result['success']:
-                result = run_command(f'cat {TRAFFIC_FILE}')
+                result = run_command(['cat', TRAFFIC_FILE])
             if result['success']:
                 return json.loads(result['stdout'])
         return {}
@@ -141,9 +208,9 @@ def save_traffic_data(traffic_data):
             json.dump(traffic_data, f, indent=2)
             temp_file = f.name
 
-        run_command(f'mkdir -p {WG_DIR}')
-        result = run_command(f'cp {temp_file} {TRAFFIC_FILE}')
-        run_command(f'chmod 600 {TRAFFIC_FILE}')
+        run_command(['mkdir', '-p', WG_DIR])
+        result = run_command(['cp', temp_file, TRAFFIC_FILE])
+        run_command(['chmod', '600', TRAFFIC_FILE])
         os.unlink(temp_file)
 
         return result['success']
@@ -218,14 +285,34 @@ def load_user(username):
     return None
 
 
-def run_command(cmd, use_sudo=True):
-    """执行命令并返回结果"""
+def run_command(cmd, use_sudo=True, shell=False):
+    """
+    执行命令并返回结果
+
+    Args:
+        cmd: 命令列表 (推荐) 或字符串 (仅用于需要shell的复杂命令)
+        use_sudo: 是否使用sudo
+        shell: 是否使用shell (仅在必要时使用)
+
+    Returns:
+        dict: 包含success, stdout, stderr, returncode的字典
+    """
     try:
-        if use_sudo and not cmd.startswith('sudo'):
-            cmd = f'sudo {cmd}'
+        # 如果是字符串且不需要shell，转换为列表
+        if isinstance(cmd, str) and not shell:
+            cmd = cmd.split()
+
+        # 如果需要sudo且cmd是列表
+        if use_sudo and isinstance(cmd, list):
+            if cmd[0] != 'sudo':
+                cmd = ['sudo'] + cmd
+        elif use_sudo and isinstance(cmd, str):
+            if not cmd.startswith('sudo'):
+                cmd = f'sudo {cmd}'
+
         result = subprocess.run(
             cmd,
-            shell=True,
+            shell=shell,
             capture_output=True,
             text=True,
             timeout=10
@@ -259,11 +346,11 @@ def get_server_info():
             print(f"DEBUG: Cannot stat config file: {e}")
 
         # 获取服务器配置
-        result = run_command(f'cat {WG_CONF}', use_sudo=False)
+        result = run_command(['cat', WG_CONF], use_sudo=False)
         if not result['success']:
             print(f"DEBUG: Non-sudo read failed: {result.get('stderr', 'No error message')}")
             # 尝试使用 sudo 读取
-            result = run_command(f'cat {WG_CONF}')
+            result = run_command(['cat', WG_CONF])
             if not result['success']:
                 print(f"DEBUG: Sudo read also failed: {result.get('stderr', 'No error message')}")
                 return {'error': 'Cannot read WireGuard config'}
@@ -282,12 +369,16 @@ def get_server_info():
             'listen_port': re.search(r'ListenPort\s*=\s*(\d+)', config).group(1) if re.search(r'ListenPort\s*=\s*(\d+)', config) else 'N/A',
         }
 
-        # 获取公网 IP
-        public_ip_cmd = run_command("ip addr show $(ip route | grep default | awk '{print $5}' | head -n1) | grep 'inet ' | awk '{print $2}' | cut -d/ -f1 | head -n1", use_sudo=False)
+        # 获取公网 IP (这个命令需要shell来处理管道和命令替换)
+        public_ip_cmd = run_command(
+            "ip addr show $(ip route | grep default | awk '{print $5}' | head -n1) | grep 'inet ' | awk '{print $2}' | cut -d/ -f1 | head -n1",
+            use_sudo=False,
+            shell=True
+        )
         server_info['public_ip'] = public_ip_cmd['stdout'].strip() if public_ip_cmd['success'] else 'N/A'
 
         # 获取服务状态
-        status_cmd = run_command(f'wg show {WG_INTERFACE}', use_sudo=False)
+        status_cmd = run_command(['wg', 'show', WG_INTERFACE], use_sudo=False)
         server_info['status'] = 'active' if status_cmd['success'] else 'inactive'
 
         print(f"DEBUG: Successfully read config, server_info: {server_info}")
@@ -438,10 +529,10 @@ def get_clients():
             return []
 
         # 读取配置文件
-        result = run_command(f'cat {WG_CONF}', use_sudo=False)
+        result = run_command(['cat', WG_CONF], use_sudo=False)
         if not result['success']:
             # 尝试使用 sudo 读取
-            result = run_command(f'cat {WG_CONF}')
+            result = run_command(['cat', WG_CONF])
             if not result['success']:
                 return []
 
@@ -452,7 +543,7 @@ def get_clients():
             return []
 
         # 获取 wg show 输出（包含连接状态）
-        wg_show = run_command(f'wg show {WG_INTERFACE}', use_sudo=False)
+        wg_show = run_command(['wg', 'show', WG_INTERFACE], use_sudo=False)
         wg_output = wg_show['stdout'] if wg_show['success'] else ''
 
         # 加载流量数据（整个函数只加载一次）
@@ -590,9 +681,9 @@ def generate_qrcode(config_text):
             f.write(config_text)
             temp_file = f.name
 
-        # 生成二维码到临时文件
+        # 生成二维码到临时文件 (需要shell进行输入重定向)
         png_file = temp_file + '.png'
-        result = run_command(f'qrencode -o {png_file} < {temp_file}')
+        result = run_command(f'qrencode -o {png_file} < {temp_file}', shell=True)
 
         if result['success'] and os.path.exists(png_file):
             with open(png_file, 'rb') as f:
@@ -604,13 +695,15 @@ def generate_qrcode(config_text):
 
             return qr_data
         else:
-            os.unlink(temp_file)
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
             return None
     except Exception as e:
         return None
 
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")  # 限制登录尝试：每分钟最多5次
 def login():
     """登录页面"""
     # 如果已登录，重定向到主页
@@ -700,7 +793,7 @@ def api_add_client():
 
         # 获取服务器信息
         server_info = get_server_info()
-        config_result = run_command(f'cat {WG_CONF}')
+        config_result = run_command(['cat', WG_CONF])
         if not config_result['success']:
             return jsonify({'success': False, 'error': 'Cannot read config'})
 
@@ -736,32 +829,46 @@ def api_add_client():
         client_ip = f"{subnet}.{next_ip}"
 
         # 创建客户端目录
-        run_command(f'mkdir -p {CLIENT_DIR}')
+        run_command(['mkdir', '-p', CLIENT_DIR])
 
         # 生成密钥
-        private_key_result = run_command('wg genkey')
+        private_key_result = run_command(['wg', 'genkey'])
         if not private_key_result['success']:
             return jsonify({'success': False, 'error': 'Failed to generate private key'})
 
         private_key = private_key_result['stdout'].strip()
 
-        # 生成公钥
-        public_key_result = run_command(f'echo "{private_key}" | wg pubkey', use_sudo=False)
+        # 生成公钥 (需要shell来处理管道)
+        public_key_result = run_command(f'echo "{private_key}" | wg pubkey', use_sudo=False, shell=True)
         if not public_key_result['success']:
             return jsonify({'success': False, 'error': 'Failed to generate public key'})
 
         public_key = public_key_result['stdout'].strip()
 
-        # 保存密钥
-        run_command(f'echo "{private_key}" > {CLIENT_DIR}/{client_name}_private.key')
-        run_command(f'echo "{public_key}" > {CLIENT_DIR}/{client_name}_public.key')
-        run_command(f'chmod 600 {CLIENT_DIR}/{client_name}_private.key')
+        # 保存密钥 - 使用Python文件操作代替echo命令
+        private_key_file = os.path.join(CLIENT_DIR, f'{client_name}_private.key')
+        public_key_file = os.path.join(CLIENT_DIR, f'{client_name}_public.key')
 
-        # 获取服务器公钥
-        server_private_key_result = run_command(f"grep '^PrivateKey' {WG_CONF} | awk '{{print $3}}'")
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write(private_key)
+            temp_priv = f.name
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+            f.write(public_key)
+            temp_pub = f.name
+
+        run_command(['cp', temp_priv, private_key_file])
+        run_command(['cp', temp_pub, public_key_file])
+        run_command(['chmod', '600', private_key_file])
+
+        os.unlink(temp_priv)
+        os.unlink(temp_pub)
+
+        # 获取服务器公钥 (需要shell来处理grep和awk管道)
+        server_private_key_result = run_command(f"grep '^PrivateKey' {WG_CONF} | awk '{{print $3}}'", shell=True)
         if server_private_key_result['success']:
             server_private_key = server_private_key_result['stdout'].strip()
-            server_public_key_result = run_command(f'echo "{server_private_key}" | wg pubkey', use_sudo=False)
+            # 使用shell管道生成公钥
+            server_public_key_result = run_command(f'echo "{server_private_key}" | wg pubkey', use_sudo=False, shell=True)
             server_public_key = server_public_key_result['stdout'].strip()
         else:
             return jsonify({'success': False, 'error': 'Cannot get server public key'})
@@ -774,15 +881,17 @@ PublicKey = {public_key}
 AllowedIPs = {client_ip}/32
 '''
 
-        # 备份配置
-        run_command(f'cp {WG_CONF} {WG_CONF}.backup.$(date +%Y%m%d_%H%M%S)')
+        # 备份配置 (需要shell来处理date命令替换)
+        backup_name = f'{WG_CONF}.backup.{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        run_command(['cp', WG_CONF, backup_name])
 
         # 追加配置 - 使用临时文件而不是echo，避免shell解释问题
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as peer_f:
             peer_f.write(peer_config)
             peer_temp = peer_f.name
 
-        run_command(f'cat {peer_temp} >> {WG_CONF}')
+        # 使用shell重定向来追加内容
+        run_command(f'cat {peer_temp} >> {WG_CONF}', shell=True)
         os.unlink(peer_temp)
 
         # 生成客户端配置
@@ -803,17 +912,18 @@ PersistentKeepalive = 25
             client_f.write(client_config)
             client_temp = client_f.name
 
-        run_command(f'cp {client_temp} {CLIENT_DIR}/{client_name}.conf')
+        client_conf_path = os.path.join(CLIENT_DIR, f'{client_name}.conf')
+        run_command(['cp', client_temp, client_conf_path])
         os.unlink(client_temp)
-        run_command(f'chmod 600 {CLIENT_DIR}/{client_name}.conf')
+        run_command(['chmod', '600', client_conf_path])
 
         # 重新加载配置 - 使用两步法代替进程替换
-        strip_result = run_command(f'wg-quick strip {WG_INTERFACE}')
+        strip_result = run_command(['wg-quick', 'strip', WG_INTERFACE])
         if strip_result['success']:
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as strip_f:
                 strip_f.write(strip_result['stdout'])
                 strip_file = strip_f.name
-            run_command(f'wg syncconf {WG_INTERFACE} {strip_file}')
+            run_command(['wg', 'syncconf', WG_INTERFACE, strip_file])
             os.unlink(strip_file)
 
         return jsonify({
@@ -836,8 +946,15 @@ def api_client_config(client_name):
         # 清理客户端名称
         client_name = re.sub(r'[^a-zA-Z0-9_-]', '', client_name)
 
-        config_file = f"{CLIENT_DIR}/{client_name}.conf"
-        result = run_command(f'cat {config_file}')
+        # 验证路径以防止路径遍历攻击
+        config_file = os.path.join(CLIENT_DIR, f"{client_name}.conf")
+        config_file = os.path.normpath(config_file)
+
+        # 确保文件在CLIENT_DIR中
+        if not config_file.startswith(os.path.normpath(CLIENT_DIR)):
+            return jsonify({'success': False, 'error': 'Invalid client name'})
+
+        result = run_command(['cat', config_file])
 
         if not result['success']:
             return jsonify({'success': False, 'error': 'Config not found'})
@@ -868,7 +985,7 @@ def api_delete_client(client_name):
             return jsonify({'success': False, 'error': '客户端名称无效'})
 
         # 读取配置
-        config_result = run_command(f'cat {WG_CONF}')
+        config_result = run_command(['cat', WG_CONF])
         if not config_result['success']:
             return jsonify({'success': False, 'error': '无法读取配置文件'})
 
@@ -1073,7 +1190,8 @@ def api_delete_client(client_name):
             })
 
         # 备份配置
-        backup_result = run_command(f'cp {WG_CONF} {WG_CONF}.backup.$(date +%Y%m%d_%H%M%S)')
+        backup_name = f'{WG_CONF}.backup.{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        backup_result = run_command(['cp', WG_CONF, backup_name])
         if not backup_result['success']:
             return jsonify({'success': False, 'error': '无法创建配置备份'})
 
@@ -1082,7 +1200,7 @@ def api_delete_client(client_name):
             f.write(new_config)
             temp_file = f.name
 
-        copy_result = run_command(f'cp {temp_file} {WG_CONF}')
+        copy_result = run_command(['cp', temp_file, WG_CONF])
         os.unlink(temp_file)
 
         if not copy_result['success']:
@@ -1090,14 +1208,17 @@ def api_delete_client(client_name):
 
         # 删除客户端文件（仅在客户端名称有效时）
         if len(client_name) > 0:
-            run_command(f'rm -f {CLIENT_DIR}/{client_name}*')
+            # 使用shell通配符来删除相关文件
+            client_pattern = os.path.join(CLIENT_DIR, f'{client_name}*')
+            run_command(f'rm -f {client_pattern}', shell=True)
             # 对于Unknown-XXXXX格式，也删除可能的原始文件
             if client_name.startswith('Unknown-'):
-                run_command(f'rm -f {CLIENT_DIR}/*{client_name.split("-")[1]}*')
+                suffix_pattern = os.path.join(CLIENT_DIR, f'*{client_name.split("-")[1]}*')
+                run_command(f'rm -f {suffix_pattern}', shell=True)
 
         # 重新加载配置并检查结果
         # 使用两步法代替进程替换，更兼容
-        strip_result = run_command(f'wg-quick strip {WG_INTERFACE}')
+        strip_result = run_command(['wg-quick', 'strip', WG_INTERFACE])
         if strip_result['success']:
             # 将strip结果写入临时文件
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as strip_f:
@@ -1105,16 +1226,16 @@ def api_delete_client(client_name):
                 strip_file = strip_f.name
 
             # 使用临时文件进行syncconf
-            reload_result = run_command(f'wg syncconf {WG_INTERFACE} {strip_file}')
+            reload_result = run_command(['wg', 'syncconf', WG_INTERFACE, strip_file])
             os.unlink(strip_file)
 
             if not reload_result['success']:
-                # 如果重新加载失败，尝试恢复最新备份
-                run_command(f'ls -t {WG_CONF}.backup.* | head -1 | xargs -I {{}} cp {{}} {WG_CONF}')
+                # 如果重新加载失败，尝试恢复最新备份 (需要shell来处理管道)
+                run_command(f'ls -t {WG_CONF}.backup.* | head -1 | xargs -I {{}} cp {{}} {WG_CONF}', shell=True)
                 return jsonify({'success': False, 'error': f'WireGuard配置重新加载失败: {reload_result.get("stderr", "未知错误")}，已恢复备份'})
         else:
-            # strip失败，恢复备份
-            run_command(f'ls -t {WG_CONF}.backup.* | head -1 | xargs -I {{}} cp {{}} {WG_CONF}')
+            # strip失败，恢复备份 (需要shell来处理管道)
+            run_command(f'ls -t {WG_CONF}.backup.* | head -1 | xargs -I {{}} cp {{}} {WG_CONF}', shell=True)
             return jsonify({'success': False, 'error': f'配置验证失败: {strip_result.get("stderr", "未知错误")}，已恢复备份'})
 
         # 删除流量记录
@@ -1138,7 +1259,7 @@ def api_debug_config():
     """调试接口：查看配置文件结构"""
     try:
         # 读取配置文件
-        config_result = run_command(f'cat {WG_CONF}')
+        config_result = run_command(['cat', WG_CONF])
         if not config_result['success']:
             return jsonify({'success': False, 'error': '无法读取配置文件'})
 
