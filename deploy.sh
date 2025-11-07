@@ -152,7 +152,7 @@ check_existing_data() {
             if [ "$confirm_delete" = "y" ] || [ "$confirm_delete" = "Y" ]; then
                 sudo rm -rf "$config_dir/wireguard"
                 log_info "现有数据已删除"
-                return 1
+                return 0
             else
                 log_info "取消删除，保留现有数据"
                 return 0
@@ -162,7 +162,7 @@ check_existing_data() {
             return 0
         fi
     fi
-    return 1
+    return 0
 }
 
 # 构建镜像
