@@ -88,42 +88,6 @@ docker restart wireguard-vpn
 docker restart wireguard-web-ui
 ```
 
-## 安全建议
-
-### 1. 密码安全
-
-系统自动生成符合以下要求的强密码：
-- 至少 8 个字符
-- 必须包含大写字母
-- 必须包含小写字母
-- 必须包含数字
-- 必须包含特殊字符 (!@#$%^&* 等)
-
-**首次登录后建议立即更改密码**：
-```bash
-sudo bash deploy.sh password
-```
-
-自定义密码部署：
-```bash
-# 设置环境变量
-export ADMIN_PASSWORD="YourStr0ng!Pass"
-sudo -E bash deploy.sh install
-```
-
-### 2. 配置防火墙
-
-```bash
-# 限制Web界面访问IP
-sudo ufw allow from YOUR_IP to any port 8080
-
-# 允许WireGuard端口
-sudo ufw allow 51820/udp
-
-# 启用防火墙
-sudo ufw enable
-```
-
 ## 配置文件
 
 默认配置目录：`/etc/wireguard-manager`（可在安装时自定义）
