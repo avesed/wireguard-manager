@@ -76,7 +76,7 @@ validate_password() {
         return 1
     fi
 
-    if ! echo "$password" | grep -q '[$!@#%^&*()_+=\[\]{};:'"'"',.<>?/\\|`~-]'; then
+    if ! echo "$password" | grep -q '[]!@#$%^&*()_+={}:;<>,.?/\\|'"'"'`~[-]'; then
         echo "密码必须包含至少一个特殊字符 (!@#$%^&* 等)"
         return 1
     fi
