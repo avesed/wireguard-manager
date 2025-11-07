@@ -145,10 +145,11 @@ check_existing_data() {
         if [ "$preserve_data" != "y" ] && [ "$preserve_data" != "Y" ]; then
             echo ""
             log_warn "即将删除所有现有数据！"
-            echo -n "请输入 'DELETE' 确认删除: "
+            echo -n "确认删除? (y/n) [n]: "
             read confirm_delete
+            confirm_delete=${confirm_delete:-n}
 
-            if [ "$confirm_delete" = "DELETE" ]; then
+            if [ "$confirm_delete" = "y" ] || [ "$confirm_delete" = "Y" ]; then
                 sudo rm -rf "$config_dir/wireguard"
                 log_info "现有数据已删除"
                 return 1
@@ -575,10 +576,11 @@ clear_all_data() {
 
     log_warn "此操作将永久删除所有 WireGuard 配置和客户端数据！"
     echo ""
-    echo -n "请输入 'DELETE ALL' 确认删除: "
+    echo -n "确认删除? (y/n) [n]: "
     read confirm_delete
+    confirm_delete=${confirm_delete:-n}
 
-    if [ "$confirm_delete" != "DELETE ALL" ]; then
+    if [ "$confirm_delete" != "y" ] && [ "$confirm_delete" != "Y" ]; then
         log_info "取消删除"
         return 0
     fi
@@ -711,6 +713,8 @@ full_install() {
     echo ""
     echo "Web 管理界面:"
     echo "  地址: http://$SERVER_IP:$WEB_PORT"
+    echo "  用户名: $admin_username"
+    echo "  密码: $admin_password"
     echo ""
     echo "常用命令:"
     echo "  查看状态: $0 status"
@@ -883,10 +887,11 @@ uninstall() {
     if [ "$delete_data" = "y" ] || [ "$delete_data" = "Y" ]; then
         echo ""
         log_warn "即将删除所有配置数据！"
-        echo -n "请输入 'DELETE' 确认: "
+        echo -n "确认删除? (y/n) [n]: "
         read confirm_delete
+        confirm_delete=${confirm_delete:-n}
 
-        if [ "$confirm_delete" = "DELETE" ]; then
+        if [ "$confirm_delete" = "y" ] || [ "$confirm_delete" = "Y" ]; then
             sudo rm -rf "$config_dir"
             log_info "配置数据已删除"
         else
