@@ -150,6 +150,11 @@ install_dependencies() {
     log_info "系统依赖检查完成"
 }
 
+# 检查是否为交互模式
+is_interactive() {
+    [ -t 0 ] && [ -t 1 ]
+}
+
 # 克隆或更新仓库
 clone_repository() {
     local repo_url="${REPO_URL:-https://github.com/avesed/wireguard-manager.git}"
@@ -160,9 +165,17 @@ clone_repository() {
     # 检查目录是否已存在
     if [ -d "$install_path" ]; then
         log_warn "目录已存在: $install_path"
-        echo -n "是否更新现有安装? (y/n) [y]: "
-        read update_choice
-        update_choice=${update_choice:-y}
+
+        local update_choice="y"
+
+        # 如果是交互模式且不是自动安装模式，询问用户
+        if is_interactive && [ "$AUTO_INSTALL" != "true" ]; then
+            echo -n "是否更新现有安装? (y/n) [y]: "
+            read update_choice
+            update_choice=${update_choice:-y}
+        else
+            log_info "非交互模式，自动更新现有安装"
+        fi
 
         if [ "$update_choice" = "y" ] || [ "$update_choice" = "Y" ]; then
             log_step "更新现有仓库..."
@@ -276,18 +289,30 @@ show_completion() {
 check_root() {
     if [ "$EUID" -ne 0 ] && [ -z "$SUDO_USER" ]; then
         log_warn "建议使用 root 或 sudo 运行此脚本"
-        echo -n "是否继续? (y/n) [n]: "
-        read continue_choice
 
-        if [ "$continue_choice" != "y" ] && [ "$continue_choice" != "Y" ]; then
-            log_info "退出安装"
-            exit 0
+        # 如果是交互模式且不是自动安装模式，询问用户
+        if is_interactive && [ "$AUTO_INSTALL" != "true" ]; then
+            echo -n "是否继续? (y/n) [n]: "
+            read continue_choice
+
+            if [ "$continue_choice" != "y" ] && [ "$continue_choice" != "Y" ]; then
+                log_info "退出安装"
+                exit 0
+            fi
+        else
+            log_warn "非交互模式，继续安装（可能需要手动处理权限问题）"
         fi
     fi
 }
 
 # 主函数
 main() {
+    # 检测是否通过管道运行，如果是则自动启用非交互模式
+    if ! is_interactive; then
+        log_info "检测到非交互模式（通过管道运行），启用自动安装"
+        AUTO_INSTALL=true
+    fi
+
     # 解析参数
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -316,6 +341,10 @@ main() {
                 echo ""
                 echo "用法:"
                 echo "  curl -fsSL https://raw.githubusercontent.com/avesed/wireguard-manager/main/install.sh | bash"
+                echo "  # 注意：通过管道运行时自动使用非交互模式"
+                echo ""
+                echo "本地运行:"
+                echo "  bash install.sh [选项]"
                 echo ""
                 echo "选项:"
                 echo "  --auto              自动安装模式（非交互）"
@@ -325,7 +354,13 @@ main() {
                 echo "  --no-git            不使用 git，直接下载压缩包"
                 echo ""
                 echo "示例:"
+                echo "  # 通过 curl 一键安装（推荐）"
+                echo "  curl -fsSL URL | bash"
+                echo ""
+                echo "  # 自动模式"
                 echo "  curl -fsSL URL | bash -s -- --auto"
+                echo ""
+                echo "  # 自定义路径"
                 echo "  curl -fsSL URL | bash -s -- --path /opt/wireguard-manager"
                 exit 0
                 ;;
