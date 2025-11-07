@@ -155,6 +155,76 @@ is_interactive() {
     [ -t 0 ] && [ -t 1 ]
 }
 
+# 增强的交互能力检测
+detect_interaction_capability() {
+    # 检测标准终端
+    if [ -t 0 ] && [ -t 1 ]; then
+        INTERACTION_MODE="terminal"
+        return 0
+    fi
+
+    # 检测 /dev/tty 可用性
+    if [ -r /dev/tty ] && [ -w /dev/tty ] 2>/dev/null; then
+        INTERACTION_MODE="tty"
+        return 0
+    fi
+
+    # 检测环境变量强制交互
+    if [ "$FORCE_INTERACTIVE" = "true" ]; then
+        INTERACTION_MODE="forced"
+        return 0
+    fi
+
+    # 检测是否禁用交互
+    if [ "$NO_INTERACTIVE" = "true" ] || [ "$AUTO_INSTALL" = "true" ]; then
+        INTERACTION_MODE="disabled"
+        return 1
+    fi
+
+    # 默认无交互能力
+    INTERACTION_MODE="none"
+    return 1
+}
+
+# 智能交互输入函数
+interactive_read() {
+    local prompt="$1"
+    local default="$2"
+    local varname="$3"
+    local timeout="${4:-30}"
+
+    case "$INTERACTION_MODE" in
+        "terminal")
+            if [ -n "$timeout" ] && [ "$timeout" != "0" ]; then
+                read -t "$timeout" -p "$prompt" $varname || eval "$varname=\"$default\""
+            else
+                read -p "$prompt" $varname
+            fi
+            ;;
+        "tty")
+            if [ -n "$timeout" ] && [ "$timeout" != "0" ]; then
+                read -t "$timeout" -p "$prompt" $varname </dev/tty || eval "$varname=\"$default\""
+            else
+                read -p "$prompt" $varname </dev/tty
+            fi
+            ;;
+        "forced")
+            # 尝试从 /dev/tty 读取，失败则使用默认值
+            read -p "$prompt" $varname </dev/tty 2>/dev/null || eval "$varname=\"$default\""
+            ;;
+        "disabled"|"none")
+            log_info "非交互模式，使用默认值: $default"
+            eval "$varname=\"$default\""
+            ;;
+    esac
+
+    # 如果变量为空，使用默认值
+    local current_value=$(eval "echo \$$varname")
+    if [ -z "$current_value" ]; then
+        eval "$varname=\"$default\""
+    fi
+}
+
 # 克隆或更新仓库
 clone_repository() {
     local repo_url="${REPO_URL:-https://github.com/avesed/wireguard-manager.git}"
@@ -168,11 +238,9 @@ clone_repository() {
 
         local update_choice="y"
 
-        # 如果是交互模式且不是自动安装模式，询问用户
-        if is_interactive && [ "$AUTO_INSTALL" != "true" ]; then
-            echo -n "是否更新现有安装? (y/n) [y]: "
-            read update_choice
-            update_choice=${update_choice:-y}
+        # 使用智能交互系统
+        if detect_interaction_capability; then
+            interactive_read "是否更新现有安装? (y/n) [y]: " "y" "update_choice"
         else
             log_info "非交互模式，自动更新现有安装"
         fi
@@ -290,10 +358,10 @@ check_root() {
     if [ "$EUID" -ne 0 ] && [ -z "$SUDO_USER" ]; then
         log_warn "建议使用 root 或 sudo 运行此脚本"
 
-        # 如果是交互模式且不是自动安装模式，询问用户
-        if is_interactive && [ "$AUTO_INSTALL" != "true" ]; then
-            echo -n "是否继续? (y/n) [n]: "
-            read continue_choice
+        # 使用智能交互系统
+        if detect_interaction_capability; then
+            local continue_choice="n"
+            interactive_read "是否继续? (y/n) [n]: " "n" "continue_choice"
 
             if [ "$continue_choice" != "y" ] && [ "$continue_choice" != "Y" ]; then
                 log_info "退出安装"
@@ -307,17 +375,44 @@ check_root() {
 
 # 主函数
 main() {
-    # 检测是否通过管道运行，如果是则自动启用非交互模式
-    if ! is_interactive; then
-        log_info "检测到非交互模式（通过管道运行），启用自动安装"
-        AUTO_INSTALL=true
-    fi
+    # 初始化智能交互系统
+    detect_interaction_capability
+
+    # 显示当前交互模式
+    case "$INTERACTION_MODE" in
+        "terminal")
+            log_info "检测到标准终端，启用完整交互模式"
+            ;;
+        "tty")
+            log_info "检测到管道模式，通过 /dev/tty 启用交互模式"
+            ;;
+        "forced")
+            log_info "强制交互模式已启用"
+            ;;
+        "disabled")
+            log_info "交互模式已禁用，使用自动安装"
+            ;;
+        "none")
+            log_info "检测到非交互环境，启用自动安装模式"
+            AUTO_INSTALL=true
+            ;;
+    esac
 
     # 解析参数
     while [ $# -gt 0 ]; do
         case "$1" in
             --auto)
                 AUTO_INSTALL=true
+                INTERACTION_MODE="disabled"
+                shift
+                ;;
+            --interactive)
+                FORCE_INTERACTIVE=true
+                shift
+                ;;
+            --no-interactive)
+                NO_INTERACTIVE=true
+                INTERACTION_MODE="disabled"
                 shift
                 ;;
             --repo)
@@ -341,21 +436,34 @@ main() {
                 echo ""
                 echo "用法:"
                 echo "  curl -fsSL https://raw.githubusercontent.com/avesed/wireguard-manager/main/install.sh | bash"
-                echo "  # 注意：通过管道运行时自动使用非交互模式"
+                echo "  # 注意：现在支持通过 /dev/tty 在管道模式下进行交互！"
                 echo ""
                 echo "本地运行:"
                 echo "  bash install.sh [选项]"
                 echo ""
                 echo "选项:"
                 echo "  --auto              自动安装模式（非交互）"
+                echo "  --interactive       强制启用交互模式"
+                echo "  --no-interactive    强制禁用交互模式"
                 echo "  --repo URL          自定义仓库 URL (默认: github.com/avesed/wireguard-manager)"
                 echo "  --path DIR          安装路径 (默认: ~/wireguard-manager)"
                 echo "  --config-dir DIR    配置目录 (默认: /etc/wireguard-manager)"
                 echo "  --no-git            不使用 git，直接下载压缩包"
                 echo ""
+                echo "环境变量:"
+                echo "  FORCE_INTERACTIVE=true   # 强制启用交互模式"
+                echo "  NO_INTERACTIVE=true      # 强制禁用交互模式"
+                echo "  AUTO_INSTALL=true        # 自动安装模式"
+                echo ""
                 echo "示例:"
-                echo "  # 通过 curl 一键安装（推荐）"
+                echo "  # 通过 curl 一键安装（支持交互！）"
                 echo "  curl -fsSL URL | bash"
+                echo ""
+                echo "  # 进程替换方式（最佳兼容性）"
+                echo "  bash <(curl -fsSL URL)"
+                echo ""
+                echo "  # 强制交互模式"
+                echo "  FORCE_INTERACTIVE=true curl -fsSL URL | bash"
                 echo ""
                 echo "  # 自动模式"
                 echo "  curl -fsSL URL | bash -s -- --auto"
