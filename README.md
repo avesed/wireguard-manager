@@ -1,6 +1,6 @@
 # WireGuard Manager
 
-基于 Docker 的 WireGuard VPN 管理工具，支持真正一键部署和完整的Web管理界面。
+基于 Docker 的 WireGuard VPN 管理工具，支持一键部署和完整的Web管理界面。
 
 ## 快速开始
 
